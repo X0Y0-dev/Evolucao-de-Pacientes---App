@@ -21,8 +21,8 @@ export default function Home() {
   const flatListRef = useRef<FlatList>(null);
 
   const filteredPatients = patients.filter(p => 
-    p.nomeCivil.toLowerCase().includes(search.toLowerCase()) || 
-    p.id.includes(search)
+    p.nome_civil.toLowerCase().includes(search.toLowerCase()) || 
+    p.prontuario.includes(search)
   );
 
   const colors = {
@@ -64,7 +64,7 @@ export default function Home() {
       >
         <View>
           <Text style={styles.reportTitle}>Relatório {total - index}</Text>
-          <Text style={styles.reportDate}>Data de última edição: {report.date}</Text>
+          <Text style={styles.reportDate}>Data de última edição: {report.atualizado_em || report.criado_em}</Text>
         </View>
         <Feather name="play" size={16} color="#000" />
       </LinearGradient>
@@ -82,18 +82,18 @@ export default function Home() {
           onPress={() => toggleExpand(item.id)}
         >
           <View style={styles.patientInfo}>
-            {item.photoUri ? (
-              <Image source={{ uri: item.photoUri }} style={styles.patientPhoto} />
+            {item.foto_perfil_path ? (
+              <Image source={{ uri: item.foto_perfil_path }} style={styles.patientPhoto} />
             ) : (
               <View style={styles.patientPhotoPlaceholder}>
                 <Feather name="user" size={30} color={isDark ? '#ccc' : '#666'} />
               </View>
             )}
             <View style={styles.patientTextInfo}>
-              <Text style={[styles.patientName, { color: colors.text }]}>{item.nomeCivil}</Text>
-              <Text style={[styles.patientId, { color: colors.text }]}>Nº PRONTUÁRIO: {item.id}</Text>
+              <Text style={[styles.patientName, { color: colors.text }]}>{item.nome_civil}</Text>
+              <Text style={[styles.patientId, { color: colors.text }]}>Nº PRONTUÁRIO: {item.prontuario}</Text>
               <Text style={[styles.patientLastReport, { color: colors.text }]}>
-                ÚLTIMO RELATÓRIO: {lastReport ? lastReport.date : 'Nenhum'}
+                ÚLTIMO RELATÓRIO: {lastReport ? (lastReport.atualizado_em || lastReport.criado_em) : 'Nenhum'}
               </Text>
             </View>
           </View>

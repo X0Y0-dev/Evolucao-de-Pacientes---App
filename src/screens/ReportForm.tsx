@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { View, Text, StyleSheet, TextInput, TouchableOpacity, ScrollView, Alert, Image } from 'react-native';
 import { NativeStackNavigationProp, NativeStackScreenProps } from '@react-navigation/native-stack';
-import { RootStackParamList } from '../types';
+import { RootStackParamList, ReportStatus } from '../types';
 import { useAppContext } from '../context/AppContext';
 import Header from '../components/Header';
 import { Feather, FontAwesome } from '@expo/vector-icons';
@@ -20,8 +20,11 @@ export default function ReportForm({ route }: Props) {
   
   const [fileUri, setFileUri] = useState<string | undefined>();
   const [fileName, setFileName] = useState<string | undefined>();
+  const [fileType, setFileType] = useState<string | undefined>();
+  const [fileSize, setFileSize] = useState<number | undefined>();
   const [relatorio, setRelatorio] = useState('');
   const [comentarios, setComentarios] = useState('');
+  const [isSaving, setIsSaving] = useState(false);
 
   const colors = {
     bg: isDark ? '#1a1a1a' : '#f0f0f0',
@@ -29,7 +32,6 @@ export default function ReportForm({ route }: Props) {
     inputBg: isDark ? '#333' : '#c9d4db',
     blueBtn: '#1d70b8',
     whatsappBtn: '#25D366',
-    emailBtn: '#d9e2e8', // Light mode email btn looks gray/white with red border
     saveBtn: '#1d70b8',
   };
 
@@ -39,8 +41,11 @@ export default function ReportForm({ route }: Props) {
         type: ['application/pdf', 'image/png', 'image/jpeg', 'image/jpg'],
       });
       if (!result.canceled && result.assets.length > 0) {
-        setFileUri(result.assets[0].uri);
-        setFileName(result.assets[0].name);
+        const asset = result.assets[0];
+        setFileUri(asset.uri);
+        setFileName(asset.name);
+        setFileType(asset.mimeType);
+        setFileSize(asset.size);
       }
     } catch (err) {
       console.log('Error picking document', err);
@@ -55,22 +60,30 @@ export default function ReportForm({ route }: Props) {
     }
   };
 
-  const handleSave = (status: 'Em Andamento' | 'Finalizado') => {
+  const handleSave = async (status: ReportStatus) => {
     if (!relatorio.trim()) {
       Alert.alert('Erro', 'O campo de relatório é obrigatório.');
       return;
     }
     
-    addReport(patientId, {
-      id: Math.random().toString(36).substr(2, 9),
-      date: new Date().toLocaleDateString('pt-BR'),
+    setIsSaving(true);
+    const success = await addReport({
+      paciente_id: patientId,
+      transcricao: relatorio,
+      comentario: comentarios,
+      arquivo_path: fileUri,
+      arquivo_nome: fileName,
+      arquivo_tipo: fileType,
+      arquivo_tamanho: fileSize,
       status,
-      fileUri,
-      text: relatorio,
-      comments: comentarios,
+      criado_em: new Date().toISOString(),
+      atualizado_em: new Date().toISOString(),
     });
+    setIsSaving(false);
     
-    navigation.goBack();
+    if (success) {
+      navigation.goBack();
+    }
   };
 
   if (!patient) return null;
@@ -82,15 +95,15 @@ export default function ReportForm({ route }: Props) {
       <ScrollView contentContainerStyle={styles.scrollContent}>
         
         <View style={styles.patientHeader}>
-          {patient.photoUri ? (
-            <Image source={{ uri: patient.photoUri }} style={styles.photo} />
+          {patient.foto_perfil_path ? (
+            <Image source={{ uri: patient.foto_perfil_path }} style={styles.photo} />
           ) : (
             <View style={[styles.photoPlaceholder, { backgroundColor: colors.inputBg }]}>
               <Feather name="user" size={40} color={isDark ? '#aaa' : '#555'} />
             </View>
           )}
-          <Text style={[styles.patientName, { color: colors.text }]}>{patient.nomeCivil}</Text>
-          <Text style={[styles.patientId, { color: colors.text }]}>Nº prontuário: {patient.id}</Text>
+          <Text style={[styles.patientName, { color: colors.text }]}>{patient.nome_civil}</Text>
+          <Text style={[styles.patientId, { color: colors.text }]}>Nº prontuário: {patient.prontuario}</Text>
           
           <TouchableOpacity style={[styles.uploadBtn, { backgroundColor: isDark ? '#4a4a4a' : '#ccc' }]} onPress={pickDocument}>
             <Text style={[styles.uploadText, { color: colors.text }]}>
@@ -117,10 +130,11 @@ export default function ReportForm({ route }: Props) {
         </View>
 
         <TouchableOpacity 
-          style={[styles.createBtn, { backgroundColor: colors.blueBtn }]}
+          style={[styles.createBtn, { backgroundColor: isSaving ? '#888' : colors.blueBtn }]}
           onPress={() => handleSave('Em Andamento')}
+          disabled={isSaving}
         >
-          <Text style={styles.createBtnText}>Criar relatório</Text>
+          <Text style={styles.createBtnText}>{isSaving ? 'Salvando...' : 'Criar relatório'}</Text>
           <Feather name="check-circle" size={20} color="#fff" style={{ marginLeft: 8 }} />
         </TouchableOpacity>
 
@@ -149,15 +163,17 @@ export default function ReportForm({ route }: Props) {
 
         <View style={styles.actionRow}>
           <TouchableOpacity 
-            style={[styles.actionBtn, { backgroundColor: colors.blueBtn, flex: 1, marginRight: 10 }]}
+            style={[styles.actionBtn, { backgroundColor: isSaving ? '#888' : colors.blueBtn, flex: 1, marginRight: 10 }]}
             onPress={() => handleSave('Em Andamento')}
+            disabled={isSaving}
           >
             <Text style={styles.actionBtnText}>Salvar</Text>
           </TouchableOpacity>
           
           <TouchableOpacity 
-            style={[styles.actionBtn, { backgroundColor: '#d9534f', flex: 1 }]}
+            style={[styles.actionBtn, { backgroundColor: isSaving ? '#888' : '#d9534f', flex: 1 }]}
             onPress={() => handleSave('Finalizado')}
+            disabled={isSaving}
           >
             <Text style={styles.actionBtnText}>Finalizar</Text>
           </TouchableOpacity>

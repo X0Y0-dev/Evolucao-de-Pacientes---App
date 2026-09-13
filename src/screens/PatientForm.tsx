@@ -7,6 +7,7 @@ import Header from '../components/Header';
 import { Feather } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import * as ImagePicker from 'expo-image-picker';
+import { formatCPF, formatDate } from '../utils/masks';
 
 type PatientFormNavigationProp = NativeStackNavigationProp<RootStackParamList, 'PatientForm'>;
 
@@ -24,6 +25,7 @@ export default function PatientForm() {
   const [telefone, setTelefone] = useState('');
   const [email, setEmail] = useState('');
   const [showSexDropdown, setShowSexDropdown] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
 
   const colors = {
     bg: isDark ? '#1a1a1a' : '#f0f0f0',
@@ -44,29 +46,42 @@ export default function PatientForm() {
     }
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (!nomeCivil || !cpf || !nascimento || !telefone || !email) {
       Alert.alert('Erro', 'Por favor, preencha todos os campos obrigatórios.');
+      return;
+    }
+
+    // Valida o formato E.164: +[código do país][número], ex: +5511999999999
+    const phoneRegex = /^\+[1-9]\d{1,14}$/;
+    if (!phoneRegex.test(telefone)) {
+      Alert.alert(
+        'Telefone inválido',
+        'O número deve estar no formato internacional E.164.\nExemplos: +5511999999999, +5521988887777'
+      );
       return;
     }
     
     // Auto generate 5 digits ID
     const randomId = Math.floor(Math.random() * 90000) + 10000;
     
-    addPatient({
-      id: randomId.toString(),
-      nomeCivil,
-      nomeSocial,
+    setIsSaving(true);
+    const success = await addPatient({
+      prontuario: randomId.toString(),
+      nome_civil: nomeCivil,
+      nome_social: nomeSocial,
       cpf,
       sexo,
       nascimento,
       telefone,
       email,
-      photoUri,
-      reports: [],
+      foto_perfil_path: photoUri,
     });
+    setIsSaving(false);
     
-    navigation.goBack();
+    if (success) {
+      navigation.goBack();
+    }
   };
 
   const genderOptions: Gender[] = ['Masculino', 'Feminino', 'Não-binário', 'Indefinido', 'Outros'];
@@ -108,7 +123,8 @@ export default function PatientForm() {
           placeholderTextColor={isDark ? '#aaa' : '#666'}
           keyboardType="numeric"
           value={cpf}
-          onChangeText={setCpf}
+          onChangeText={(text) => setCpf(formatCPF(text))}
+          maxLength={14}
         />
 
         <View style={styles.row}>
@@ -143,8 +159,9 @@ export default function PatientForm() {
               style={[styles.input, { backgroundColor: colors.inputBg, color: colors.text }]}
               placeholder="DD/MM/AAAA"
               placeholderTextColor={isDark ? '#aaa' : '#666'}
+              keyboardType="numeric"
               value={nascimento}
-              onChangeText={setNascimento}
+              onChangeText={(text) => setNascimento(formatDate(text))}
               maxLength={10}
             />
           </View>
@@ -162,18 +179,30 @@ export default function PatientForm() {
         />
         <TextInput
           style={[styles.input, { backgroundColor: colors.inputBg, color: colors.text }]}
-          placeholder="Telefone *"
+          placeholder="Telefone * (ex: +5511999999999)"
           placeholderTextColor={isDark ? '#aaa' : '#666'}
           keyboardType="phone-pad"
           value={telefone}
-          onChangeText={setTelefone}
+          onChangeText={(text) => {
+            // Garante que o número sempre começa com '+'
+            let val = text;
+            if (val.length > 0 && val[0] !== '+') {
+              val = '+' + val.replace(/[^0-9]/g, '');
+            } else {
+              // Preserva o '+' inicial e remove qualquer outro caractere não-numérico após ele
+              val = '+' + val.slice(1).replace(/[^0-9]/g, '');
+            }
+            // Limita ao tamanho máximo do E.164 (15 dígitos + o '+' = 16 chars)
+            setTelefone(val.slice(0, 16));
+          }}
         />
 
         <TouchableOpacity 
-          style={[styles.submitBtn, { backgroundColor: colors.greenBtn }]}
+          style={[styles.submitBtn, { backgroundColor: isSaving ? '#888' : colors.greenBtn }]}
           onPress={handleSave}
+          disabled={isSaving}
         >
-          <Text style={styles.submitBtnText}>Criar paciente</Text>
+          <Text style={styles.submitBtnText}>{isSaving ? 'Salvando...' : 'Criar paciente'}</Text>
           <Feather name="check-circle" size={20} color="#fff" style={{ marginLeft: 8 }} />
         </TouchableOpacity>
 
