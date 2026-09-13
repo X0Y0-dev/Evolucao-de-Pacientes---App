@@ -10,6 +10,7 @@ interface AppContextData {
   patients: Patient[];
   addPatient: (patient: Omit<Patient, 'id' | 'reports'>) => Promise<boolean>;
   addReport: (report: Omit<Report, 'id'>) => Promise<boolean>;
+  deletePatient: (patientId: string) => Promise<boolean>;
   fetchPatients: () => Promise<void>;
   isLoading: boolean;
 }
@@ -97,6 +98,8 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
 
       let finalPhotoPath: string | undefined = patient.foto_perfil_path;
 
+      const { data: { session } } = await supabase.auth.getSession();
+      console.log('[DEBUG] Sessão ativa:', session ? `SIM — role: ${session.user?.role}, expira: ${session.expires_at}` : 'NENHUMA');
       // Upload da foto usando expo-file-system + base64-arraybuffer
       if (finalPhotoPath && (finalPhotoPath.startsWith('file://') || finalPhotoPath.startsWith('content://'))) {
         try {
@@ -228,8 +231,66 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     }
   };
 
+  const deletePatient = async (patientId: string): Promise<boolean> => {
+    try {
+      const patient = patients.find((p) => p.id === patientId);
+      if (!patient) {
+        Alert.alert('Erro', 'Paciente não encontrado.');
+        return false;
+      }
+
+      // 1. Apaga os arquivos dos relatórios vinculados
+      const reportPaths = patient.reports
+        .map((r) => r.arquivo_path)
+        .filter((path): path is string => !!path);
+
+      if (reportPaths.length > 0) {
+        const { error: reportsStorageError } = await supabase.storage
+          .from('relatorios_arquivos')
+          .remove(reportPaths);
+
+        if (reportsStorageError) {
+          console.error('[deletePatient] Erro ao apagar arquivos de relatórios:\n', buildErrorMessage(reportsStorageError));
+          // segue mesmo assim — não trava a exclusão por causa de arquivo órfão
+        }
+      }
+
+      // 2. Apaga a foto de perfil
+      if (patient.foto_perfil_path) {
+        const { data: removedData, error: photoStorageError } = await supabase.storage
+          .from('pacientes_fotos')
+          .remove([patient.foto_perfil_path]);
+
+        console.log('[deletePatient] Path que tentei apagar:', patient.foto_perfil_path);
+        console.log('[deletePatient] Resultado do remove:', JSON.stringify(removedData));
+
+        if (photoStorageError) {
+          console.error('[deletePatient] Erro ao apagar foto:\n', buildErrorMessage(photoStorageError));
+        }
+      }
+
+      // 3. Apaga o paciente (cascade cuida dos relatórios na tabela)
+      const { error } = await supabase.from('pacientes').delete().eq('id', patientId);
+
+      if (error) {
+        const msg = buildErrorMessage(error);
+        console.error('[deletePatient] Erro ao apagar paciente:\n', msg);
+        Alert.alert('Erro ao apagar paciente', msg);
+        return false;
+      }
+
+      setPatients((prev) => prev.filter((p) => p.id !== patientId));
+      return true;
+    } catch (error: any) {
+      const msg = buildErrorMessage(error);
+      console.error('[deletePatient] Exceção inesperada:\n', msg);
+      Alert.alert('Erro inesperado ao apagar paciente', msg);
+      return false;
+    }
+  };
+
   return (
-    <AppContext.Provider value={{ theme, toggleTheme, patients, addPatient, addReport, fetchPatients, isLoading }}>
+    <AppContext.Provider value={{ theme, toggleTheme, patients, addPatient, addReport, deletePatient, fetchPatients, isLoading }}>
       {children}
     </AppContext.Provider>
   );

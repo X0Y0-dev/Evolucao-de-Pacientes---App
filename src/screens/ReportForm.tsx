@@ -7,6 +7,7 @@ import Header from '../components/Header';
 import { Feather, FontAwesome } from '@expo/vector-icons';
 import * as DocumentPicker from 'expo-document-picker';
 import { useNavigation } from '@react-navigation/native';
+import { getPatientPhotoUrl } from '../utils/uploadFile';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'ReportForm'>;
 
@@ -25,6 +26,7 @@ export default function ReportForm({ route }: Props) {
   const [relatorio, setRelatorio] = useState('');
   const [comentarios, setComentarios] = useState('');
   const [isSaving, setIsSaving] = useState(false);
+  const [photoError, setPhotoError] = useState(false);
 
   const colors = {
     bg: isDark ? '#1a1a1a' : '#f0f0f0',
@@ -95,11 +97,21 @@ export default function ReportForm({ route }: Props) {
       <ScrollView contentContainerStyle={styles.scrollContent}>
         
         <View style={styles.patientHeader}>
-          {patient.foto_perfil_path ? (
-            <Image source={{ uri: patient.foto_perfil_path }} style={styles.photo} />
+          {getPatientPhotoUrl(patient.foto_perfil_path) && !photoError ? (
+            <Image
+              source={{ uri: getPatientPhotoUrl(patient.foto_perfil_path) }}
+              style={styles.photo}
+              onError={() => {
+                setPhotoError(true);
+                Alert.alert(
+                  'Erro ao carregar foto',
+                  `Não foi possível exibir a foto do paciente "${patient.nome_civil}". Exibindo imagem padrão.`
+                );
+              }}
+            />
           ) : (
             <View style={[styles.photoPlaceholder, { backgroundColor: colors.inputBg }]}>
-              <Feather name="user" size={40} color={isDark ? '#aaa' : '#555'} />
+              <Feather name="image" size={40} color={isDark ? '#aaa' : '#555'} />
             </View>
           )}
           <Text style={[styles.patientName, { color: colors.text }]}>{patient.nome_civil}</Text>

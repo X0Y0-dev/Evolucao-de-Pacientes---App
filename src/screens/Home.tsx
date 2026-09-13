@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react';
-import { View, Text, StyleSheet, TextInput, TouchableOpacity, FlatList, Image, Animated } from 'react-native';
+import { View, Text, StyleSheet, TextInput, TouchableOpacity, FlatList, Image, Animated, Alert } from 'react-native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList, Patient, Report } from '../types';
 import { useAppContext } from '../context/AppContext';
@@ -7,18 +7,47 @@ import Header from '../components/Header';
 import { Feather } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useNavigation } from '@react-navigation/native';
+import { getPatientPhotoUrl } from '../utils/uploadFile';
 
 type HomeScreenNavigationProp = NativeStackNavigationProp<RootStackParamList, 'Home'>;
 
 export default function Home() {
   const navigation = useNavigation<HomeScreenNavigationProp>();
-  const { theme, patients } = useAppContext();
+  const { theme, patients, deletePatient } = useAppContext();
   const isDark = theme === 'dark';
   
   const [search, setSearch] = useState('');
   const [expandedPatientId, setExpandedPatientId] = useState<string | null>(null);
   const [showScrollTop, setShowScrollTop] = useState(false);
+  const [imageErrors, setImageErrors] = useState<Record<string, boolean>>({});
   const flatListRef = useRef<FlatList>(null);
+
+  const handleDeletePatient = (id: string, name: string) => {
+    Alert.alert(
+      'Excluir paciente',
+      `Tem certeza de que deseja excluir o paciente "${name}"? Todos os relatórios e arquivos vinculados serão apagados.`,
+      [
+        { text: 'Cancelar', style: 'cancel' },
+        {
+          text: 'Sim',
+          style: 'destructive',
+          onPress: async () => {
+            await deletePatient(id);
+          },
+        },
+      ]
+    );
+  };
+
+  const handleImageError = (id: string, name: string) => {
+    if (!imageErrors[id]) {
+      setImageErrors(prev => ({ ...prev, [id]: true }));
+      Alert.alert(
+        'Erro ao carregar foto',
+        `Não foi possível exibir a foto do paciente "${name}". Exibindo imagem padrão.`
+      );
+    }
+  };
 
   const filteredPatients = patients.filter(p => 
     p.nome_civil.toLowerCase().includes(search.toLowerCase()) || 
@@ -74,6 +103,8 @@ export default function Home() {
   const renderPatient = ({ item }: { item: Patient }) => {
     const isExpanded = expandedPatientId === item.id;
     const lastReport = item.reports.length > 0 ? item.reports[item.reports.length - 1] : null;
+    const photoUrl = getPatientPhotoUrl(item.foto_perfil_path);
+    const hasPhotoError = !!imageErrors[item.id];
 
     return (
       <View style={[styles.patientWrapper, { backgroundColor: isExpanded ? colors.cardBorder : 'transparent', padding: isExpanded ? 10 : 0, borderRadius: 10, marginBottom: 10 }]}>
@@ -82,11 +113,15 @@ export default function Home() {
           onPress={() => toggleExpand(item.id)}
         >
           <View style={styles.patientInfo}>
-            {item.foto_perfil_path ? (
-              <Image source={{ uri: item.foto_perfil_path }} style={styles.patientPhoto} />
+            {photoUrl && !hasPhotoError ? (
+              <Image
+                source={{ uri: photoUrl }}
+                style={styles.patientPhoto}
+                onError={() => handleImageError(item.id, item.nome_civil)}
+              />
             ) : (
               <View style={styles.patientPhotoPlaceholder}>
-                <Feather name="user" size={30} color={isDark ? '#ccc' : '#666'} />
+                <Feather name="image" size={28} color={isDark ? '#ccc' : '#555'} />
               </View>
             )}
             <View style={styles.patientTextInfo}>
@@ -102,13 +137,23 @@ export default function Home() {
 
         {isExpanded && (
           <View style={styles.expandedArea}>
-            <TouchableOpacity 
-              style={[styles.blueBtn, { backgroundColor: colors.blueBtn }]}
-              onPress={() => navigation.navigate('ReportForm', { patientId: item.id })}
-            >
-              <Text style={styles.btnText}>Novo relatório</Text>
-              <Feather name="file-text" size={18} color="#fff" style={{ marginLeft: 8 }} />
-            </TouchableOpacity>
+            <View style={styles.expandedButtonsRow}>
+              <TouchableOpacity 
+                style={[styles.blueBtn, { backgroundColor: colors.blueBtn }]}
+                onPress={() => navigation.navigate('ReportForm', { patientId: item.id })}
+              >
+                <Text style={styles.actionBtnText}>Novo relatório</Text>
+                <Feather name="file-text" size={16} color="#fff" style={{ marginLeft: 6 }} />
+              </TouchableOpacity>
+
+              <TouchableOpacity 
+                style={[styles.deleteBtn, { backgroundColor: '#d9534f' }]}
+                onPress={() => handleDeletePatient(item.id, item.nome_civil)}
+              >
+                <Text style={styles.actionBtnText}>Excluir paciente</Text>
+                <Feather name="trash-2" size={16} color="#fff" style={{ marginLeft: 6 }} />
+              </TouchableOpacity>
+            </View>
 
             {[...item.reports].reverse().map((r, i) => renderReport(r, i, item.reports.length))}
           </View>
@@ -211,15 +256,36 @@ const styles = StyleSheet.create({
   patientId: { fontSize: 12, opacity: 0.8, marginTop: 2 },
   patientLastReport: { fontSize: 10, opacity: 0.6, marginTop: 2 },
   expandedArea: { marginTop: 10 },
+  expandedButtonsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 15,
+  },
   blueBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     paddingVertical: 10,
     borderRadius: 20,
-    marginBottom: 15,
-    alignSelf: 'center',
-    paddingHorizontal: 20,
+    paddingHorizontal: 12,
+    flex: 1,
+    marginRight: 6,
+  },
+  deleteBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 10,
+    borderRadius: 20,
+    paddingHorizontal: 12,
+    flex: 1,
+    marginLeft: 6,
+  },
+  actionBtnText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: 'bold',
   },
   reportCard: {
     flexDirection: 'row',

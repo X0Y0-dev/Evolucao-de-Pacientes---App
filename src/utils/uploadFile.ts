@@ -28,7 +28,7 @@ export async function uploadFileToBucket(
     .from(bucket)
     .upload(fileName, decode(base64), {
       contentType,
-      upsert: true, // substitui se já existir arquivo com o mesmo nome
+      upsert: false, // substitui se já existir arquivo com o mesmo nome
     });
 
   if (error) throw error;
@@ -51,3 +51,16 @@ export function getContentType(uri: string): string {
     default:     return 'image/jpeg';
   }
 }
+
+/**
+ * Converte o path da foto do paciente em uma URL pública do Supabase Storage.
+ */
+export function getPatientPhotoUrl(path?: string): string | undefined {
+  if (!path) return undefined;
+  if (path.startsWith('http://') || path.startsWith('https://') || path.startsWith('file://') || path.startsWith('content://')) {
+    return path;
+  }
+  const { data } = supabase.storage.from('pacientes_fotos').getPublicUrl(path);
+  return data.publicUrl;
+}
+
