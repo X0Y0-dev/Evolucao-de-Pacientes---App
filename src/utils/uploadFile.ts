@@ -18,9 +18,16 @@ export async function uploadFileToBucket(
   localUri: string,
   bucket: Bucket,
   fileName: string,
-  contentType: string
+  contentType: string,
+  upsert: boolean = false
 ): Promise<UploadResult> {
-  const base64 = await FileSystem.readAsStringAsync(localUri, {
+  // Copia o arquivo pra um path totalmente controlado pelo app antes de ler,
+  // contorna casos de arquivos vindos de outros apps (WhatsApp, Drive, etc.)
+  // cuja URI original pode ficar inacessível pro FileSystem.
+  const safeUri = `${FileSystem.cacheDirectory}upload-${Date.now()}-${fileName}`;
+  await FileSystem.copyAsync({ from: localUri, to: safeUri });
+
+  const base64 = await FileSystem.readAsStringAsync(safeUri, {
     encoding: FileSystem.EncodingType.Base64,
   });
 
@@ -28,8 +35,10 @@ export async function uploadFileToBucket(
     .from(bucket)
     .upload(fileName, decode(base64), {
       contentType,
-      upsert: false, // substitui se já existir arquivo com o mesmo nome
+      upsert,
     });
+
+  await FileSystem.deleteAsync(safeUri, { idempotent: true });
 
   if (error) throw error;
 

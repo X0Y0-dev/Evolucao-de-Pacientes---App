@@ -11,6 +11,9 @@ export interface Patient {
   email: string;
   foto_perfil_path?: string;
   prontuario: string;
+  criado_em?: string;
+  created_at?: string;
+  atualizado_em?: string;
   
   // Local state for UI only
   reports: Report[];
@@ -35,6 +38,6 @@ export interface Report {
 export type RootStackParamList = {
   Splash: undefined;
   Home: undefined;
-  PatientForm: undefined;
-  ReportForm: { patientId: string };
+  PatientForm: { patientId?: string } | undefined;
+  ReportForm: { patientId: string; reportId?: string };
 };

@@ -3,13 +3,17 @@ import { Patient, Report } from '../types';
 import { supabase } from '../lib/supabase';
 import { Alert } from 'react-native';
 import { uploadFileToBucket, getContentType } from '../utils/uploadFile';
+import { formatDateToISO } from '../utils/formatDate';
 
 interface AppContextData {
   theme: 'light' | 'dark';
   toggleTheme: () => void;
   patients: Patient[];
   addPatient: (patient: Omit<Patient, 'id' | 'reports'>) => Promise<boolean>;
+  updatePatient: (patientId: string, updatedData: Partial<Patient>, newPhotoUri?: string) => Promise<boolean>;
   addReport: (report: Omit<Report, 'id'>) => Promise<boolean>;
+  updateReport: (reportId: string, updates: Partial<Omit<Report, 'id'>>) => Promise<boolean>;
+  deleteReport: (reportId: string, patientId: string) => Promise<boolean>;
   deletePatient: (patientId: string) => Promise<boolean>;
   fetchPatients: () => Promise<void>;
   isLoading: boolean;
@@ -88,13 +92,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
   const addPatient = async (patient: Omit<Patient, 'id' | 'reports'>): Promise<boolean> => {
     try {
       // Converte data DD/MM/AAAA → YYYY-MM-DD para o Supabase
-      let formattedNascimento = patient.nascimento;
-      if (formattedNascimento.includes('/')) {
-        const [day, month, year] = formattedNascimento.split('/');
-        if (day && month && year) {
-          formattedNascimento = `${year}-${month}-${day}`;
-        }
-      }
+      const formattedNascimento = formatDateToISO(patient.nascimento);
 
       let finalPhotoPath: string | undefined = patient.foto_perfil_path;
 
@@ -158,6 +156,74 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
       const msg = buildErrorMessage(error);
       console.error('[addPatient] Exceção inesperada:\n', msg);
       Alert.alert('Erro inesperado ao salvar paciente', msg);
+      return false;
+    }
+  };
+
+  const updatePatient = async (patientId: string, updatedData: Partial<Patient>, newPhotoUri?: string): Promise<boolean> => {
+    try {
+      const patient = patients.find((p) => p.id === patientId);
+      if (!patient) {
+        Alert.alert('Erro', 'Paciente não encontrado.');
+        return false;
+      }
+
+      // Converte data DD/MM/AAAA → YYYY-MM-DD para o Supabase, se necessário
+      const formattedUpdatedData = { ...updatedData };
+      if (formattedUpdatedData.nascimento) {
+        formattedUpdatedData.nascimento = formatDateToISO(formattedUpdatedData.nascimento);
+      }
+
+      let finalPhotoPath = patient.foto_perfil_path;
+
+      if (newPhotoUri && (newPhotoUri.startsWith('file://') || newPhotoUri.startsWith('content://'))) {
+        const extension = newPhotoUri.split('.').pop()?.toLowerCase() ?? 'jpg';
+        const contentType = getContentType(newPhotoUri);
+        const fileName = `${patient.prontuario}-${Date.now()}.${extension}`;
+
+        // Sobe a foto nova primeiro
+        const { path: novaFotoPath } = await uploadFileToBucket(
+          newPhotoUri,
+          'pacientes_fotos',
+          fileName,
+          contentType
+        );
+
+        // Só apaga a antiga depois que a nova subiu com sucesso
+        if (patient.foto_perfil_path) {
+          const { error: removeError } = await supabase.storage
+            .from('pacientes_fotos')
+            .remove([patient.foto_perfil_path]);
+
+          if (removeError) {
+            console.error('[updatePatient] Erro ao apagar foto antiga:\n', buildErrorMessage(removeError));
+            // segue mesmo assim — não trava a atualização por causa de arquivo órfão
+          }
+        }
+
+        finalPhotoPath = novaFotoPath;
+      }
+
+      const { data, error } = await supabase
+        .from('pacientes')
+        .update({ ...formattedUpdatedData, foto_perfil_path: finalPhotoPath })
+        .eq('id', patientId)
+        .select()
+        .single();
+
+      if (error) {
+        const msg = buildErrorMessage(error);
+        console.error('[updatePatient] Erro ao atualizar paciente:\n', msg);
+        Alert.alert('Erro ao atualizar paciente', msg);
+        return false;
+      }
+
+      setPatients((prev) => prev.map((p) => (p.id === patientId ? { ...p, ...data } : p)));
+      return true;
+    } catch (error: any) {
+      const msg = buildErrorMessage(error);
+      console.error('[updatePatient] Exceção inesperada:\n', msg);
+      Alert.alert('Erro inesperado ao atualizar paciente', msg);
       return false;
     }
   };
@@ -231,6 +297,120 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
     }
   };
 
+  const updateReport = async (reportId: string, updates: Partial<Omit<Report, 'id'>>): Promise<boolean> => {
+    try {
+      let finalFilePath: string | undefined = updates.arquivo_path;
+
+      // Upload do arquivo caso o usuário tenha anexado um novo arquivo local
+      if (finalFilePath && (finalFilePath.startsWith('file://') || finalFilePath.startsWith('content://'))) {
+        try {
+          const extension = finalFilePath.split('.').pop()?.toLowerCase() ?? 'pdf';
+          const contentType = getContentType(finalFilePath);
+          const fileName = `${Date.now()}-${updates.arquivo_nome ?? `arquivo.${extension}`}`;
+
+          console.log('[updateReport] Iniciando upload do novo arquivo:', fileName);
+
+          const { path: arquivoPath } = await uploadFileToBucket(
+            finalFilePath,
+            'relatorios_arquivos',
+            fileName,
+            contentType
+          );
+
+          console.log('[updateReport] Upload de arquivo bem-sucedido. Path:', arquivoPath);
+          finalFilePath = arquivoPath;
+        } catch (uploadErr: any) {
+          const msg = buildErrorMessage(uploadErr);
+          console.error('[updateReport] Erro no upload do arquivo:\n', msg);
+          Alert.alert('Erro ao enviar arquivo', msg);
+          return false;
+        }
+      }
+
+      const payload = {
+        ...updates,
+        ...(finalFilePath !== undefined ? { arquivo_path: finalFilePath } : {}),
+        atualizado_em: new Date().toISOString(),
+      };
+
+      console.log('[updateReport] Payload enviado ao Supabase:', JSON.stringify(payload, null, 2));
+
+      const { data, error } = await supabase
+        .from('relatorios')
+        .update(payload)
+        .eq('id', reportId)
+        .select()
+        .single();
+
+      if (error) {
+        const msg = buildErrorMessage(error);
+        console.error('[updateReport] Erro ao atualizar relatório:\n', msg);
+        Alert.alert('Erro ao atualizar relatório', msg);
+        return false;
+      }
+
+      if (data) {
+        setPatients((prev) =>
+          prev.map((p) => ({
+            ...p,
+            reports: p.reports.map((r) => (r.id === reportId ? { ...r, ...data } : r)),
+          }))
+        );
+        return true;
+      }
+
+      Alert.alert('Atenção', 'Nenhum dado retornado pelo Supabase após a atualização do relatório.');
+      return false;
+    } catch (error: any) {
+      const msg = buildErrorMessage(error);
+      console.error('[updateReport] Exceção inesperada:\n', msg);
+      Alert.alert('Erro inesperado ao atualizar relatório', msg);
+      return false;
+    }
+  };
+
+  const deleteReport = async (reportId: string, patientId: string): Promise<boolean> => {
+    try {
+      const patient = patients.find((p) => p.id === patientId);
+      const report = patient?.reports.find((r) => r.id === reportId);
+
+      // 1. Apaga o arquivo do relatório no storage se existir
+      if (report?.arquivo_path) {
+        const { error: storageError } = await supabase.storage
+          .from('relatorios_arquivos')
+          .remove([report.arquivo_path]);
+
+        if (storageError) {
+          console.error('[deleteReport] Erro ao apagar arquivo:\n', buildErrorMessage(storageError));
+        }
+      }
+
+      // 2. Apaga o relatório na tabela do Supabase
+      const { error } = await supabase.from('relatorios').delete().eq('id', reportId);
+
+      if (error) {
+        const msg = buildErrorMessage(error);
+        console.error('[deleteReport] Erro ao apagar relatório:\n', msg);
+        Alert.alert('Erro ao apagar relatório', msg);
+        return false;
+      }
+
+      setPatients((prev) =>
+        prev.map((p) =>
+          p.id === patientId
+            ? { ...p, reports: p.reports.filter((r) => r.id !== reportId) }
+            : p
+        )
+      );
+      return true;
+    } catch (error: any) {
+      const msg = buildErrorMessage(error);
+      console.error('[deleteReport] Exceção inesperada:\n', msg);
+      Alert.alert('Erro inesperado ao apagar relatório', msg);
+      return false;
+    }
+  };
+
   const deletePatient = async (patientId: string): Promise<boolean> => {
     try {
       const patient = patients.find((p) => p.id === patientId);
@@ -290,7 +470,7 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
   };
 
   return (
-    <AppContext.Provider value={{ theme, toggleTheme, patients, addPatient, addReport, deletePatient, fetchPatients, isLoading }}>
+    <AppContext.Provider value={{ theme, toggleTheme, patients, addPatient, updatePatient, addReport, updateReport, deleteReport, deletePatient, fetchPatients, isLoading }}>
       {children}
     </AppContext.Provider>
   );
