@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, TextInput, TouchableOpacity, ScrollView, Alert, Image } from 'react-native';
+import { View, Text, StyleSheet, TextInput, TouchableOpacity, ScrollView, Alert, Image, KeyboardAvoidingView, Platform } from 'react-native';
 import { NativeStackNavigationProp, NativeStackScreenProps } from '@react-navigation/native-stack';
 import { RootStackParamList, ReportStatus } from '../types';
 import { useAppContext } from '../context/AppContext';
@@ -175,10 +175,14 @@ export default function ReportForm({ route }: Props) {
   if (!patient) return null;
 
   return (
-    <View style={[styles.container, { backgroundColor: colors.bg }]}>
+    <KeyboardAvoidingView
+      style={[styles.container, { backgroundColor: colors.bg }]}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      keyboardVerticalOffset={Platform.OS === 'ios' ? 80 : 0}
+    >
       <Header showBack />
 
-      <ScrollView contentContainerStyle={styles.scrollContent}>
+      <ScrollView contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
 
         <View style={styles.patientHeader}>
           {getPatientPhotoUrl(patient.foto_perfil_path) && !photoError ? (
@@ -291,7 +295,7 @@ export default function ReportForm({ route }: Props) {
         )}
 
       </ScrollView>
-    </View>
+    </KeyboardAvoidingView>
   );
 }
 

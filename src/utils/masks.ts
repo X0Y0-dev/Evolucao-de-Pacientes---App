@@ -54,3 +54,12 @@ export const formatPhone = (text?: string) => {
   return formatted;
 };
 
+export const formatCEP = (text?: string) => {
+  if (!text) return '';
+  let cleaned = text.replace(/\D/g, '');
+  cleaned = cleaned.slice(0, 8); // Máximo de 8 dígitos
+
+  if (cleaned.length <= 5) return cleaned;
+  return `${cleaned.slice(0, 5)}-${cleaned.slice(5, 8)}`;
+};
+

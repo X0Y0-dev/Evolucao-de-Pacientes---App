@@ -14,7 +14,16 @@ export interface Patient {
   criado_em?: string;
   created_at?: string;
   atualizado_em?: string;
-  
+
+  // Endereço (ViaCEP)
+  cep?: string;
+  logradouro?: string;
+  bairro?: string;
+  localidade?: string;
+  uf?: string;
+  numero_endereco?: string;
+  complemento_endereco?: string;
+
   // Local state for UI only
   reports: Report[];
 }
