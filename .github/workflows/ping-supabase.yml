@@ -23,6 +23,7 @@ jobs:
           BASE_URL="${BASE_URL%/rest/v1}"
 
           curl --fail --silent --show-error \
-            "${BASE_URL}/rest/v1/pacientes?select=id&limit=1" \
+            -X POST "${BASE_URL}/rest/v1/rpc/ping" \
             -H "apikey: ${API_KEY}" \
-            -H "Authorization: Bearer ${API_KEY}"
+            -H "Content-Type: application/json" \
+            -d '{}'
