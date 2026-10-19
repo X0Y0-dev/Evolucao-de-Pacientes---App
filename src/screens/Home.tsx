@@ -7,7 +7,7 @@ import Header from '../components/Header';
 import { Feather } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useNavigation } from '@react-navigation/native';
-import { getPatientPhotoUrl } from '../utils/uploadFile';
+import { urlAssinada } from '../utils/storage';
 
 type HomeScreenNavigationProp = NativeStackNavigationProp<RootStackParamList, 'Home'>;
 
@@ -54,6 +54,11 @@ const PatientCardItem = ({
 }: PatientCardItemProps) => {
   const animatedValue = useRef(new Animated.Value(isExpanded ? 1 : 0)).current;
   const [shouldRender, setShouldRender] = useState(isExpanded);
+  const [fotoUrl, setFotoUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    urlAssinada('pacientes_fotos', item.foto_perfil_path ?? null).then(setFotoUrl);
+  }, [item.foto_perfil_path]);
 
   useEffect(() => {
     if (isExpanded) {
@@ -85,7 +90,6 @@ const PatientCardItem = ({
   });
 
   const lastReport = item.reports.length > 0 ? item.reports[item.reports.length - 1] : null;
-  const photoUrl = getPatientPhotoUrl(item.foto_perfil_path);
   const hasPhotoError = !!imageErrors[item.id];
 
   // Caso o paciente tenha Nome Social, exibe o Nome Social; caso contrário, Nome Civil
@@ -102,9 +106,9 @@ const PatientCardItem = ({
         activeOpacity={0.85}
       >
         <View style={styles.patientInfo}>
-          {photoUrl && !hasPhotoError ? (
+          {fotoUrl && !hasPhotoError ? (
             <Image
-              source={{ uri: photoUrl }}
+              source={{ uri: fotoUrl }}
               style={styles.patientPhoto}
               onError={() => onImageError(item.id, displayName)}
             />
@@ -148,7 +152,7 @@ const PatientCardItem = ({
           {[...item.reports].reverse().map((r, i) => (
             <LinearGradient
               key={r.id}
-              colors={r.status === 'Finalizado' ? (['#a8e063', '#56ab2f'] as const) : (['#f6d365', '#fda085'] as const)}
+              colors={(r.status === 'finalizado' || r.status === 'Finalizado') ? (['#a8e063', '#56ab2f'] as const) : (['#f6d365', '#fda085'] as const)}
               start={{ x: 0, y: 0 }}
               end={{ x: 1, y: 0 }}
               style={styles.reportCard}

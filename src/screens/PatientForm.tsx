@@ -12,6 +12,7 @@ import { useNavigation } from '@react-navigation/native';
 import * as ImagePicker from 'expo-image-picker';
 import { formatCPF, formatDate, formatPhone, formatCEP } from '../utils/masks';
 import { getPatientPhotoUrl } from '../utils/uploadFile';
+import { urlAssinada } from '../utils/storage';
 import { validateEmail } from '../utils/validators';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'PatientForm'>;
@@ -45,13 +46,29 @@ export default function PatientForm({ route }: Props) {
   const [numeroEndereco, setNumeroEndereco] = useState('');
   const [complementoEndereco, setComplementoEndereco] = useState('');
   const [isFetchingCep, setIsFetchingCep] = useState(false);
+  const [signedPhotoUrl, setSignedPhotoUrl] = useState<string | null>(null);
 
   useEffect(() => {
     if (existingPatient) {
+      if (existingPatient.foto_perfil_path) {
+        urlAssinada('pacientes_fotos', existingPatient.foto_perfil_path).then(setSignedPhotoUrl);
+      }
       setNomeCivil(existingPatient.nome_civil);
       setNomeSocial(existingPatient.nome_social || '');
       setCpf(formatCPF(existingPatient.cpf));
-      setSexo(existingPatient.sexo);
+      // Normaliza para o novo padrão caso o registro antigo tenha vindo com PascalCase
+      const rawSexo = existingPatient.sexo as string | undefined;
+      let normalizedSexo: Gender | undefined = undefined;
+      if (rawSexo) {
+        const lower = rawSexo.toLowerCase().replace('-', '_');
+        if (lower === 'masculino') normalizedSexo = 'masculino';
+        else if (lower === 'feminino') normalizedSexo = 'feminino';
+        else if (lower.includes('binario')) normalizedSexo = 'nao_binario';
+        else if (lower === 'indefinido') normalizedSexo = 'indefinido';
+        else if (lower.startsWith('outro')) normalizedSexo = 'outro';
+        else normalizedSexo = rawSexo as Gender;
+      }
+      setSexo(normalizedSexo);
       let birth = existingPatient.nascimento || '';
       if (birth.includes('-')) {
         const parts = birth.split('-');
@@ -204,10 +221,28 @@ export default function PatientForm({ route }: Props) {
     );
   };
 
-  const genderOptions: Gender[] = ['Masculino', 'Feminino', 'Não-binário', 'Indefinido', 'Outros'];
+  const genderOptions: { label: string; value: Gender }[] = [
+    { label: 'Masculino', value: 'masculino' },
+    { label: 'Feminino', value: 'feminino' },
+    { label: 'Não-binário', value: 'nao_binario' },
+    { label: 'Indefinido', value: 'indefinido' },
+    { label: 'Outro', value: 'outro' },
+  ];
+
+  const selectedGenderLabel = genderOptions.find((opt) => opt.value === sexo)?.label || (
+    // Fallback caso algum registro antigo ainda venha com a grafia anterior
+    sexo === ('Masculino' as any) ? 'Masculino' :
+    sexo === ('Feminino' as any) ? 'Feminino' :
+    sexo === ('Não-binário' as any) ? 'Não-binário' :
+    sexo === ('Indefinido' as any) ? 'Indefinido' :
+    sexo === ('Outros' as any) ? 'Outro' :
+    sexo
+  );
 
   const displayPhotoUri = photoUri
-    ? ((photoUri.startsWith('file://') || photoUri.startsWith('content://')) ? photoUri : getPatientPhotoUrl(photoUri))
+    ? ((photoUri.startsWith('file://') || photoUri.startsWith('content://'))
+        ? photoUri
+        : (signedPhotoUrl || getPatientPhotoUrl(photoUri)))
     : undefined;
 
   return (
@@ -238,13 +273,13 @@ export default function PatientForm({ route }: Props) {
           <View style={{ flex: 1, marginRight: 10 }}>
             <Text style={[styles.label, { color: colors.text }]}>Sexo:</Text>
             <TouchableOpacity style={[styles.input, { backgroundColor: colors.inputBg, justifyContent: 'center' }]} onPress={() => setShowSexDropdown(!showSexDropdown)}>
-              <Text style={{ color: sexo ? colors.text : (isDark ? '#aaa' : '#666') }}>{sexo || 'Selecionar'}</Text>
+              <Text style={{ color: selectedGenderLabel ? colors.text : (isDark ? '#aaa' : '#666') }}>{selectedGenderLabel || 'Selecionar'}</Text>
             </TouchableOpacity>
             {showSexDropdown && (
               <View style={[styles.dropdown, { backgroundColor: colors.inputBg }]}>
                 {genderOptions.map((opt) => (
-                  <TouchableOpacity key={opt} style={styles.dropdownItem} onPress={() => { setSexo(opt as Gender); setShowSexDropdown(false); }}>
-                    <Text style={{ color: colors.text }}>{opt}</Text>
+                  <TouchableOpacity key={opt.value} style={styles.dropdownItem} onPress={() => { setSexo(opt.value); setShowSexDropdown(false); }}>
+                    <Text style={{ color: colors.text }}>{opt.label}</Text>
                   </TouchableOpacity>
                 ))}
               </View>

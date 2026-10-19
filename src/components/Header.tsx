@@ -2,6 +2,7 @@ import React from 'react';
 import { View, Image, StyleSheet, TouchableOpacity, SafeAreaView, Platform, StatusBar } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useAppContext } from '../context/AppContext';
+import { useAuth } from '../contexts/AuthContext';
 import { useNavigation } from '@react-navigation/native';
 
 interface HeaderProps {
@@ -10,12 +11,14 @@ interface HeaderProps {
 
 export default function Header({ showBack = false }: HeaderProps) {
   const { theme, toggleTheme } = useAppContext();
+  const { session, signOut } = useAuth();
   const navigation = useNavigation();
   const isDark = theme === 'dark';
 
   return (
     <SafeAreaView style={{ backgroundColor: isDark ? '#1a1a1a' : '#f0f0f0' }}>
       <View style={styles.container}>
+        {/* Lado esquerdo: voltar */}
         <View style={styles.left}>
           {showBack && (
             <TouchableOpacity onPress={() => navigation.goBack()} style={styles.iconButton}>
@@ -26,10 +29,16 @@ export default function Header({ showBack = false }: HeaderProps) {
 
         <Image source={require('../../assets/logo.png')} style={styles.logo} resizeMode="contain" />
 
+        {/* Lado direito: tema + sair */}
         <View style={styles.right}>
           <TouchableOpacity onPress={toggleTheme} style={styles.iconButton}>
             <Feather name={isDark ? 'moon' : 'sun'} size={24} color={isDark ? '#fff' : '#000'} />
           </TouchableOpacity>
+          {session ? (
+            <TouchableOpacity onPress={signOut} style={styles.iconButton}>
+              <Feather name="log-out" size={22} color={isDark ? '#fff' : '#000'} />
+            </TouchableOpacity>
+          ) : null}
         </View>
       </View>
     </SafeAreaView>
@@ -50,12 +59,15 @@ const styles = StyleSheet.create({
     height: 60,
   },
   left: {
-    width: 40,
+    flex: 1,
     alignItems: 'flex-start',
   },
   right: {
-    width: 40,
-    alignItems: 'flex-end',
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    gap: 4,
   },
   iconButton: {
     padding: 5,

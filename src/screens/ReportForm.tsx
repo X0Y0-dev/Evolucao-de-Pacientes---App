@@ -21,8 +21,9 @@ import { Feather, FontAwesome } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
 import { useNavigation } from '@react-navigation/native';
-import { getPatientPhotoUrl } from '../utils/uploadFile';
+import { urlAssinada } from '../utils/storage';
 import { supabase } from '../lib/supabase';
+import { FunctionsHttpError } from '@supabase/supabase-js';
 import { validateEmail } from '../utils/validators';
 
 interface RecipientItem {
@@ -46,7 +47,11 @@ export default function ReportForm({ route }: Props) {
     ? patient?.reports.find(r => r.id === reportId)
     : undefined;
 
-  const [reportStatus, setReportStatus] = useState<ReportStatus>(existingReport?.status ?? 'Em Andamento');
+  const [reportStatus, setReportStatus] = useState<ReportStatus>(
+    existingReport?.status === 'Finalizado' || existingReport?.status === 'finalizado'
+      ? 'finalizado'
+      : 'em_andamento'
+  );
   const [fileUri, setFileUri] = useState<string | undefined>(existingReport?.arquivo_path);
   const [fileName, setFileName] = useState<string | undefined>(existingReport?.arquivo_nome);
   const [fileType, setFileType] = useState<string | undefined>(existingReport?.arquivo_tipo);
@@ -55,6 +60,11 @@ export default function ReportForm({ route }: Props) {
   const [comentarios, setComentarios] = useState(existingReport?.comentario ?? '');
   const [isSaving, setIsSaving] = useState(false);
   const [photoError, setPhotoError] = useState(false);
+  const [fotoUrl, setFotoUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    urlAssinada('pacientes_fotos', patient?.foto_perfil_path ?? null).then(setFotoUrl);
+  }, [patient?.foto_perfil_path]);
 
   // Estados para o modal de compartilhamento por e-mail
   const [emailModalVisible, setEmailModalVisible] = useState(false);
@@ -64,7 +74,11 @@ export default function ReportForm({ route }: Props) {
   // Se o relatório mudar (ex: navegação de outro relatório), recarrega os dados
   useEffect(() => {
     if (existingReport) {
-      setReportStatus(existingReport.status);
+      setReportStatus(
+        existingReport.status === 'Finalizado' || existingReport.status === 'finalizado'
+          ? 'finalizado'
+          : 'em_andamento'
+      );
       setFileUri(existingReport.arquivo_path);
       setFileName(existingReport.arquivo_nome);
       setFileType(existingReport.arquivo_tipo);
@@ -74,7 +88,7 @@ export default function ReportForm({ route }: Props) {
     }
   }, [reportId]);
 
-  const isFinalizado = reportStatus === 'Finalizado';
+  const isFinalizado = reportStatus === 'finalizado' || reportStatus === 'Finalizado';
 
   const colors = {
     bg: isDark ? '#1a1a1a' : '#f0f0f0',
@@ -241,10 +255,35 @@ export default function ReportForm({ route }: Props) {
       return;
     }
 
-    // 2. Iniciar envio individual para cada destinatário
+    // 2. Verificar se existe sessão ativa antes de invocar
+    const { data: { session } } = await supabase.auth.getSession();
+    const isSessionExpired = !session || (session.expires_at ? session.expires_at * 1000 < Date.now() : false);
+
+    if (isSessionExpired) {
+      console.log('[Auth] Sessão ausente ou expirada. Invocação não realizada.');
+      Alert.alert(
+        'Sessão expirada',
+        'Sua sessão não está ativa ou expirou. Por favor, faça login novamente no aplicativo.'
+      );
+      return;
+    }
+
+    // 3. Iniciar envio individual para cada destinatário
     setIsSendingEmail(true);
 
     const results: Array<{ mailto: string; success: boolean; error?: string }> = [];
+
+    const toSubject = `Relatório de Evolução - ${patient?.nome_civil ?? 'Paciente'}`;
+    const toHtml = `
+      <h2>Relatório de Evolução do Paciente</h2>
+      <p><strong>Paciente:</strong> ${patient?.nome_civil ?? ''}</p>
+      <p><strong>Nº Prontuário:</strong> ${patient?.prontuario ?? ''}</p>
+      <p><strong>Status:</strong> ${reportStatus === 'finalizado' ? 'Finalizado' : 'Em Andamento'}</p>
+      <hr/>
+      <h3>Transcrição / Relatório:</h3>
+      <p>${relatorio ? relatorio.replace(/\n/g, '<br/>') : '<em>Sem transcrição</em>'}</p>
+      ${comentarios ? `<h3>Comentários:</h3><p>${comentarios.replace(/\n/g, '<br/>')}</p>` : ''}
+    `;
 
     for (let i = 0; i < validatedRecipients.length; i++) {
       const item = validatedRecipients[i];
@@ -255,54 +294,49 @@ export default function ReportForm({ route }: Props) {
       );
 
       try {
-        const SUPABASE_URL =
-          process.env.EXPO_PUBLIC_SUPABASE_URL ||
-          process.env.SUPABASE_URL ||
-          'https://nrrprjfnsutsmrdzivka.supabase.co';
+        const to = mailto;
+        const subject = toSubject;
+        const html = toHtml;
 
-        console.log("Projeto Supabase:", SUPABASE_URL);
-        console.log("Tentando chamar resend-email...");
-
-        const { data, error } = await supabase.functions.invoke(
-          "resend-email",
-          {
-            body: {
-              to: mailto,
-              subject: "Teste de envio",
-              html: "<h1>Teste</h1>",
-            },
-          },
-        );
+        const { data, error } = await supabase.functions.invoke('resend-email', {
+          body: { to, subject, html, relatorio_id: reportId },
+        });
 
         if (error) {
-          console.error("Erro da Edge Function:", error);
-
-          if (error.context instanceof Response) {
-            console.error("Status HTTP:", error.context.status);
-            console.error(
-              "Resposta HTTP:",
-              await error.context.clone().text(),
-            );
+          if (error instanceof FunctionsHttpError) {
+            console.log('STATUS:', error.context.status);
+            console.log('RESPOSTA:', await error.context.text());
+          } else {
+            console.log('ERRO DE REDE/RELAY:', error.message);
           }
 
-          const errMsg = error.message || 'Falha na comunicação com o servidor de e-mail.';
-          results.push({ mailto, success: false, error: errMsg });
+          const userFriendlyMsg =
+            error instanceof FunctionsHttpError
+              ? error.context.status === 401
+                ? 'Acesso não autorizado: verifique sua sessão.'
+                : error.context.status === 404
+                ? 'Função de envio não encontrada no servidor.'
+                : error.context.status === 400
+                ? 'Requisição recusada pelo servidor.'
+                : 'O servidor não pôde concluir o envio.'
+              : 'Falha de conexão com o servidor. Verifique sua internet.';
+
+          results.push({ mailto, success: false, error: userFriendlyMsg });
           setRecipients(prev =>
-            prev.map(r => (r.id === item.id ? { ...r, status: 'error', errorMessage: errMsg } : r))
+            prev.map(r => (r.id === item.id ? { ...r, status: 'error', errorMessage: userFriendlyMsg } : r))
           );
         } else {
-          console.log("Resposta:", data);
           results.push({ mailto, success: true });
           setRecipients(prev =>
             prev.map(r => (r.id === item.id ? { ...r, status: 'success' } : r))
           );
         }
       } catch (invokeErr: any) {
-        console.error(`Exceção ao solicitar envio para ${mailto}:`, invokeErr);
-        const errMsg = invokeErr?.message || 'Erro inesperado no envio.';
-        results.push({ mailto, success: false, error: errMsg });
+        console.log('ERRO DE REDE/RELAY:', invokeErr?.message || String(invokeErr));
+        const userFriendlyMsg = 'Falha inesperada ao tentar se comunicar com o servidor de e-mail.';
+        results.push({ mailto, success: false, error: userFriendlyMsg });
         setRecipients(prev =>
-          prev.map(r => (r.id === item.id ? { ...r, status: 'error', errorMessage: errMsg } : r))
+          prev.map(r => (r.id === item.id ? { ...r, status: 'error', errorMessage: userFriendlyMsg } : r))
         );
       }
     }
@@ -341,12 +375,12 @@ export default function ReportForm({ route }: Props) {
 
     setIsSaving(true);
     const success = await updateReport(reportId, {
-      status: 'Em Andamento',
+      status: 'em_andamento',
     });
     setIsSaving(false);
 
     if (success) {
-      setReportStatus('Em Andamento');
+      setReportStatus('em_andamento');
       Alert.alert('Relatório reaberto', 'O status mudou para "Em Andamento" e agora você pode editá-lo.');
     }
   };
@@ -364,9 +398,9 @@ export default function ReportForm({ route }: Props) {
       <ScrollView contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
 
         <View style={styles.patientHeader}>
-          {getPatientPhotoUrl(patient.foto_perfil_path) && !photoError ? (
+          {fotoUrl && !photoError ? (
             <Image
-              source={{ uri: getPatientPhotoUrl(patient.foto_perfil_path) }}
+              source={{ uri: fotoUrl }}
               style={styles.photo}
               onError={() => {
                 setPhotoError(true);
@@ -460,7 +494,7 @@ export default function ReportForm({ route }: Props) {
           <View style={styles.actionRow}>
             <TouchableOpacity
               style={[styles.actionBtn, { backgroundColor: isSaving ? '#888' : colors.blueBtn, flex: 1, marginRight: 10 }]}
-              onPress={() => handleSave('Em Andamento')}
+              onPress={() => handleSave('em_andamento')}
               disabled={isSaving}
             >
               <Text style={styles.actionBtnText}>{isSaving ? 'Salvando...' : 'Salvar'}</Text>
@@ -468,7 +502,7 @@ export default function ReportForm({ route }: Props) {
 
             <TouchableOpacity
               style={[styles.actionBtn, { backgroundColor: isSaving ? '#888' : '#d9534f', flex: 1 }]}
-              onPress={() => handleSave('Finalizado')}
+              onPress={() => handleSave('finalizado')}
               disabled={isSaving}
             >
               <Text style={styles.actionBtnText}>{isSaving ? 'Finalizando...' : 'Finalizar'}</Text>

@@ -1,4 +1,4 @@
-export type Gender = 'Masculino' | 'Feminino' | 'Não-binário' | 'Indefinido' | 'Outros';
+export type Gender = 'masculino' | 'feminino' | 'nao_binario' | 'indefinido' | 'outro';
 
 export interface Patient {
   id: string; // UUID from Supabase
@@ -28,7 +28,7 @@ export interface Patient {
   reports: Report[];
 }
 
-export type ReportStatus = 'Em Andamento' | 'Finalizado';
+export type ReportStatus = 'em_andamento' | 'finalizado' | 'Em Andamento' | 'Finalizado';
 
 export interface Report {
   id: string; // UUID from Supabase
@@ -45,6 +45,7 @@ export interface Report {
 }
 
 export type RootStackParamList = {
+  Login: undefined;
   Splash: undefined;
   Home: undefined;
   PatientForm: { patientId?: string } | undefined;
