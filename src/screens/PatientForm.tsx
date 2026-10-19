@@ -12,6 +12,7 @@ import { useNavigation } from '@react-navigation/native';
 import * as ImagePicker from 'expo-image-picker';
 import { formatCPF, formatDate, formatPhone, formatCEP } from '../utils/masks';
 import { getPatientPhotoUrl } from '../utils/uploadFile';
+import { validateEmail } from '../utils/validators';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'PatientForm'>;
 
@@ -120,13 +121,9 @@ export default function PatientForm({ route }: Props) {
     }
 
     const cleanEmail = email.trim().toLowerCase();
-    // Checagem: deve conter '@' e terminar em '.com' ou com a sigla do país (.br, .fr, .us e etc.)
-    const emailRegex = /^[a-z0-9._%+-]+@[a-z0-9.-]+\.(com|[a-z]{2})$/;
-    if (!cleanEmail.includes('@') || !emailRegex.test(cleanEmail)) {
-      Alert.alert(
-        'E-mail inválido',
-        'O e-mail deve conter "@" e terminar em ".com" ou com a sigla do país (ex: .br, .fr, .us).'
-      );
+    const emailValidation = validateEmail(cleanEmail);
+    if (!emailValidation.isValid) {
+      Alert.alert('E-mail inválido', emailValidation.error || 'Formato de e-mail inválido.');
       return;
     }
 
