@@ -568,7 +568,6 @@ export default function ReportForm({ route }: Props) {
                         editable={!isSendingEmail}
                         onChangeText={(t) => handleRecipientChange(item.id, t)}
                       />
-
                       {recipients.length > 1 && (
                         <TouchableOpacity
                           style={[styles.removeRecipientBtn, { opacity: isSendingEmail ? 0.4 : 1 }]}
