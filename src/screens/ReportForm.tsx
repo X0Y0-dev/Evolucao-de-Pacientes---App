@@ -26,6 +26,12 @@ import { supabase } from '../lib/supabase';
 import { FunctionsHttpError } from '@supabase/supabase-js';
 import { validateEmail } from '../utils/validators';
 import { extrairTextoDoArquivo, OcrError } from '../utils/ocr';
+import {
+  montarConteudoCompartilhamento,
+  isTextoExtenso,
+  LIMITE_AVISO_TEXTO,
+} from '../services/compartilhamento/montarConteudo';
+import { compartilharPorWhatsApp } from '../services/compartilhamento/whatsapp';
 
 interface RecipientItem {
   id: string;
@@ -261,6 +267,67 @@ export default function ReportForm({ route }: Props) {
     }
     setRecipients([{ id: Date.now().toString(), mailto: '' }]);
     setEmailModalVisible(true);
+  };
+
+  const handleShareWhatsApp = () => {
+    if (!reportId) {
+      Alert.alert(
+        'Salvar relatório',
+        'Para compartilhar este relatório pelo WhatsApp, é necessário salvá-lo primeiro para que a versão persistida no sistema seja enviada.'
+      );
+      return;
+    }
+
+    const reportIndex = patient?.reports.findIndex(r => r.id === reportId) ?? -1;
+    const reportNumber = reportIndex >= 0 ? reportIndex + 1 : undefined;
+
+    const conteudo = montarConteudoCompartilhamento({
+      numeroRelatorio: reportNumber,
+      prontuario: patient?.prontuario,
+      transcricao: relatorio,
+      comentario: comentarios,
+      anexo: fileUri
+        ? {
+            uri: fileUri,
+            nome: fileName,
+            mimeType: fileType,
+          }
+        : undefined,
+    });
+
+    const executarEnvio = async () => {
+      const res = await compartilharPorWhatsApp(conteudo);
+      if (!res.sucesso && !res.cancelado && res.erro) {
+        Alert.alert(
+          'Erro ao compartilhar',
+          'Não foi possível abrir o compartilhamento do WhatsApp. Verifique se o aplicativo está instalado e tente novamente.'
+        );
+      }
+    };
+
+    const confirmarEnvio = () => {
+      if (isTextoExtenso(conteudo.texto, LIMITE_AVISO_TEXTO)) {
+        Alert.alert(
+          'Texto extenso',
+          `O relatório possui mais de ${LIMITE_AVISO_TEXTO} caracteres. Por questões de legibilidade no WhatsApp, a mensagem pode ficar bastante longa.\n\nDeseja continuar mesmo assim?`,
+          [
+            { text: 'Cancelar', style: 'cancel' },
+            { text: 'Continuar', onPress: executarEnvio },
+          ]
+        );
+      } else {
+        executarEnvio();
+      }
+    };
+
+    Alert.alert(
+      'Compartilhar via WhatsApp',
+      'O conteúdo será compartilhado pelo WhatsApp. Confirme que não há dados que identifiquem o paciente.',
+      [
+        { text: 'Cancelar', style: 'cancel' },
+        { text: 'Continuar', onPress: confirmarEnvio },
+      ]
+    );
   };
 
   const handleAddRecipient = () => {
@@ -527,14 +594,33 @@ export default function ReportForm({ route }: Props) {
 
         <Text style={[styles.sectionTitle, { color: colors.text }]}>Compartilhar:</Text>
         <View style={styles.shareRow}>
-          <TouchableOpacity style={[styles.shareBtn, { backgroundColor: colors.whatsappBtn }]}>
+          <TouchableOpacity
+            style={[
+              styles.shareBtn,
+              {
+                backgroundColor: colors.whatsappBtn,
+                opacity: !reportId ? 0.6 : 1,
+              },
+            ]}
+            onPress={handleShareWhatsApp}
+            activeOpacity={!reportId ? 0.6 : 0.8}
+          >
             <Text style={[styles.shareText, { color: '#fff' }]}>WhatsApp</Text>
             <FontAwesome name="whatsapp" size={18} color="#fff" style={{ marginLeft: 5 }} />
           </TouchableOpacity>
 
           <TouchableOpacity
-            style={[styles.shareBtn, { backgroundColor: isDark ? '#444' : '#eee', borderColor: '#d9534f', borderWidth: 1 }]}
+            style={[
+              styles.shareBtn,
+              {
+                backgroundColor: isDark ? '#444' : '#eee',
+                borderColor: '#d9534f',
+                borderWidth: 1,
+                opacity: !reportId ? 0.6 : 1,
+              },
+            ]}
             onPress={handleOpenEmailModal}
+            activeOpacity={!reportId ? 0.6 : 0.8}
           >
             <Text style={[styles.shareText, { color: colors.text }]}>E-mail</Text>
             <Feather name="mail" size={18} color={colors.text} style={{ marginLeft: 5 }} />
