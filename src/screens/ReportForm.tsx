@@ -25,6 +25,7 @@ import { urlAssinada } from '../utils/storage';
 import { supabase } from '../lib/supabase';
 import { FunctionsHttpError } from '@supabase/supabase-js';
 import { validateEmail } from '../utils/validators';
+import { extrairTextoDoArquivo, OcrError } from '../utils/ocr';
 
 interface RecipientItem {
   id: string;
@@ -59,6 +60,7 @@ export default function ReportForm({ route }: Props) {
   const [relatorio, setRelatorio] = useState(existingReport?.transcricao ?? '');
   const [comentarios, setComentarios] = useState(existingReport?.comentario ?? '');
   const [isSaving, setIsSaving] = useState(false);
+  const [isTranscribing, setIsTranscribing] = useState(false);
   const [photoError, setPhotoError] = useState(false);
   const [fotoUrl, setFotoUrl] = useState<string | null>(null);
 
@@ -148,11 +150,61 @@ export default function ReportForm({ route }: Props) {
     );
   };
 
-  const transcrever = () => {
-    if (fileUri) {
-      setRelatorio(relatorio + '\n[Transcrição do arquivo simulada...]');
-    } else {
+  const transcrever = async () => {
+    if (!fileUri) {
       Alert.alert('Aviso', 'Nenhum arquivo anexado para transcrever.');
+      return;
+    }
+
+    const effectiveMime =
+      fileType ||
+      (fileName?.toLowerCase().endsWith('.pdf')
+        ? 'application/pdf'
+        : fileName?.toLowerCase().endsWith('.png')
+        ? 'image/png'
+        : 'image/jpeg');
+
+    // Validar tipo antes de enviar
+    const allowedTypes = ['application/pdf', 'image/png', 'image/jpeg', 'image/jpg'];
+    if (!allowedTypes.includes(effectiveMime.toLowerCase())) {
+      Alert.alert(
+        'Tipo não suportado',
+        'Apenas arquivos PDF, PNG e JPG/JPEG podem ser transcritos.',
+      );
+      return;
+    }
+
+    setIsTranscribing(true);
+
+    try {
+      const result = await extrairTextoDoArquivo(fileUri, fileName, effectiveMime);
+
+      if (!result.texto.trim()) {
+        Alert.alert(
+          'Sem texto',
+          'Não foi possível extrair texto do arquivo. Verifique se o documento contém texto legível.',
+        );
+      } else {
+        const separator = relatorio.trim() ? '\n\n' : '';
+        setRelatorio(prev => prev + separator + result.texto);
+        Alert.alert('Transcrição concluída', 'O texto foi extraído e adicionado ao relatório.');
+      }
+    } catch (err) {
+      const ocrErr = err as OcrError;
+      const actions: Array<{ text: string; onPress?: () => void; style?: 'cancel' | 'default' | 'destructive' }> = [
+        { text: 'OK', style: 'cancel' },
+      ];
+
+      if (ocrErr.retryable) {
+        actions.push({
+          text: 'Tentar novamente',
+          onPress: () => transcrever(),
+        });
+      }
+
+      Alert.alert('Erro na transcrição', ocrErr.message || 'Erro desconhecido.', actions);
+    } finally {
+      setIsTranscribing(false);
     }
   };
 
@@ -273,7 +325,9 @@ export default function ReportForm({ route }: Props) {
 
     const results: Array<{ mailto: string; success: boolean; error?: string }> = [];
 
-    const toSubject = `Relatório de Evolução - ${patient?.nome_civil ?? 'Paciente'}`;
+    const reportIndex = patient?.reports.findIndex(r => r.id === reportId) ?? -1;
+    const reportNumber = reportIndex >= 0 ? reportIndex + 1 : '';
+    const toSubject = `Relatório de Evolução ${reportNumber} - ${patient?.nome_civil ?? 'Paciente'}`;
     const toHtml = `
       <h2>Relatório de Evolução do Paciente</h2>
       <p><strong>Paciente:</strong> ${patient?.nome_civil ?? ''}</p>
@@ -443,8 +497,19 @@ export default function ReportForm({ route }: Props) {
             editable={!isFinalizado}
           />
           {!isFinalizado && (
-            <TouchableOpacity style={styles.transcribeBtn} onPress={transcrever}>
-              <Text style={styles.transcribeText}>Transcrever arquivo</Text>
+            <TouchableOpacity
+              style={[styles.transcribeBtn, { opacity: isTranscribing ? 0.6 : 1 }]}
+              onPress={transcrever}
+              disabled={isTranscribing}
+            >
+              {isTranscribing ? (
+                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                  <ActivityIndicator size="small" color="#1d70b8" style={{ marginRight: 6 }} />
+                  <Text style={styles.transcribeText}>Extraindo texto…</Text>
+                </View>
+              ) : (
+                <Text style={styles.transcribeText}>Transcrever arquivo</Text>
+              )}
             </TouchableOpacity>
           )}
         </View>
