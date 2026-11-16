@@ -18,27 +18,27 @@ import {
 export const LIMITE_AVISO_TEXTO = 4000;
 
 /**
- * Formata a identificação do paciente/caso de forma anonimizada.
- * Por padrão de privacidade, utiliza estritamente o prontuário e/ou número do caso,
- * sem incluir nomes ou iniciais.
- *
- * Facilmente customizável caso a regra de identificação mude no futuro.
+ * Formata a identificação do paciente para o compartilhamento.
+ * Exibe o nome social (caso preenchido) ou o nome civil, junto ao prontuário.
  */
 export function formatarIdentificacaoPaciente(
   prontuario?: string,
-  numeroRelatorio?: number | string,
+  nomeCivil?: string,
+  nomeSocial?: string,
 ): string {
   const partes: string[] = [];
 
-  if (numeroRelatorio !== undefined && numeroRelatorio !== '') {
-    partes.push(`Caso / Relatório: #${numeroRelatorio}`);
+  const nomeExibicao = (nomeSocial && nomeSocial.trim()) ? nomeSocial.trim() : nomeCivil?.trim();
+
+  if (nomeExibicao) {
+    partes.push(nomeExibicao);
   }
 
   if (prontuario && prontuario.trim()) {
     partes.push(`Prontuário: ${prontuario.trim()}`);
   }
 
-  return partes.length > 0 ? partes.join(' | ') : 'Caso não identificado';
+  return partes.length > 0 ? partes.join(' | ') : 'Paciente não identificado';
 }
 
 /**
@@ -59,13 +59,17 @@ export function montarConteudoCompartilhamento(
 ): ConteudoCompartilhamento {
   const numero = caso.numeroRelatorio ? ` ${caso.numeroRelatorio}` : '';
   const titulo = `Relatório de Evolução${numero}`;
-  const identificacao = formatarIdentificacaoPaciente(caso.prontuario, caso.numeroRelatorio);
+  const identificacao = formatarIdentificacaoPaciente(
+    caso.prontuario,
+    caso.nomeCivil,
+    caso.nomeSocial,
+  );
 
   const blocos: string[] = [];
 
   // Cabeçalho do caso
   blocos.push(`*${titulo}*`);
-  blocos.push(`*Identificação:* ${identificacao}`);
+  blocos.push(`*Paciente:* ${identificacao}`);
 
   // Seção de Relatório (transcrição)
   const relatorioTexto = caso.transcricao?.trim() || 'Sem conteúdo de relatório.';
@@ -85,3 +89,42 @@ export function montarConteudoCompartilhamento(
     anexo: caso.anexo,
   };
 }
+
+/**
+ * Monta o objeto de conteúdo formatado para compartilhamento por e-mail.
+ *
+ * Características específicas do canal de e-mail:
+ * - Corpo em texto simples (isHtml: false), sem formatação de asteriscos.
+ * - Assunto: `Relatório de Evolução {n} - {identificação}`.
+ * - Identificação: utiliza exclusivamente `formatarIdentificacaoPaciente(caso.prontuario)`
+ *   (apenas número do caso/prontuário, sem nome do paciente).
+ * - Corpo: relatório (transcrição) e comentário (omitido se vazio).
+ */
+export function montarConteudoEmail(
+  caso: DadosCasoCompartilhamento,
+): ConteudoCompartilhamento {
+  const numero = caso.numeroRelatorio ? ` ${caso.numeroRelatorio}` : '';
+  const identificacao = formatarIdentificacaoPaciente(caso.prontuario);
+  const titulo = `Relatório de Evolução${numero} - ${identificacao}`;
+
+  const blocos: string[] = [];
+
+  // Seção de Relatório (transcrição)
+  const relatorioTexto = caso.transcricao?.trim() || 'Sem conteúdo de relatório.';
+  blocos.push(`Relatório:\n${relatorioTexto}`);
+
+  // Seção de Comentários (omitida se vazia)
+  const comentarioTexto = caso.comentario?.trim();
+  if (comentarioTexto) {
+    blocos.push(`Comentários:\n${comentarioTexto}`);
+  }
+
+  const textoFinal = blocos.join('\n\n');
+
+  return {
+    titulo,
+    texto: textoFinal,
+    anexo: caso.anexo,
+  };
+}
+

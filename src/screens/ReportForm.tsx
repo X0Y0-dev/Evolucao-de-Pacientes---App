@@ -23,23 +23,25 @@ import * as DocumentPicker from 'expo-document-picker';
 import { useNavigation } from '@react-navigation/native';
 import { urlAssinada } from '../utils/storage';
 import { supabase } from '../lib/supabase';
-import { FunctionsHttpError } from '@supabase/supabase-js';
 import { validateEmail } from '../utils/validators';
 import { extrairTextoDoArquivo, OcrError } from '../utils/ocr';
 import {
   montarConteudoCompartilhamento,
+  montarConteudoEmail,
   isTextoExtenso,
   LIMITE_AVISO_TEXTO,
 } from '../services/compartilhamento/montarConteudo';
 import { compartilharPorWhatsApp } from '../services/compartilhamento/whatsapp';
+import { compartilharPorEmail } from '../services/compartilhamento/email';
+import { Destinatarios } from '../services/compartilhamento/types';
 
-interface RecipientItem {
+interface EmailRecipientItem {
   id: string;
-  mailto: string;
+  email: string;
   error?: string;
-  status?: 'idle' | 'sending' | 'success' | 'error';
-  errorMessage?: string;
 }
+
+type RecipientSection = 'para' | 'cc' | 'cco';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'ReportForm'>;
 
@@ -76,8 +78,10 @@ export default function ReportForm({ route }: Props) {
 
   // Estados para o modal de compartilhamento por e-mail
   const [emailModalVisible, setEmailModalVisible] = useState(false);
-  const [recipients, setRecipients] = useState<RecipientItem[]>([{ id: '1', mailto: '' }]);
-  const [isSendingEmail, setIsSendingEmail] = useState(false);
+  const [paraRecipients, setParaRecipients] = useState<EmailRecipientItem[]>([{ id: '1', email: '' }]);
+  const [ccRecipients, setCcRecipients] = useState<EmailRecipientItem[]>([]);
+  const [ccoRecipients, setCcoRecipients] = useState<EmailRecipientItem[]>([]);
+  const [isPreparingEmail, setIsPreparingEmail] = useState(false);
 
   // Se o relatório mudar (ex: navegação de outro relatório), recarrega os dados
   useEffect(() => {
@@ -265,7 +269,9 @@ export default function ReportForm({ route }: Props) {
       );
       return;
     }
-    setRecipients([{ id: Date.now().toString(), mailto: '' }]);
+    setParaRecipients([{ id: Date.now().toString(), email: '' }]);
+    setCcRecipients([]);
+    setCcoRecipients([]);
     setEmailModalVisible(true);
   };
 
@@ -284,6 +290,8 @@ export default function ReportForm({ route }: Props) {
     const conteudo = montarConteudoCompartilhamento({
       numeroRelatorio: reportNumber,
       prontuario: patient?.prontuario,
+      nomeCivil: patient?.nome_civil,
+      nomeSocial: patient?.nome_social,
       transcricao: relatorio,
       comentario: comentarios,
       anexo: fileUri
@@ -330,56 +338,114 @@ export default function ReportForm({ route }: Props) {
     );
   };
 
-  const handleAddRecipient = () => {
-    setRecipients(prev => [...prev, { id: `${Date.now()}-${prev.length}`, mailto: '' }]);
+  const handleAddRecipient = (section: RecipientSection) => {
+    const newItem = { id: `${Date.now()}-${Math.random()}`, email: '' };
+    if (section === 'para') {
+      setParaRecipients(prev => [...prev, newItem]);
+    } else if (section === 'cc') {
+      setCcRecipients(prev => [...prev, newItem]);
+    } else {
+      setCcoRecipients(prev => [...prev, newItem]);
+    }
   };
 
-  const handleRemoveRecipient = (id: string) => {
-    if (recipients.length <= 1) return;
-    setRecipients(prev => prev.filter(r => r.id !== id));
+  const handleRemoveRecipient = (section: RecipientSection, id: string) => {
+    if (section === 'para') {
+      if (paraRecipients.length <= 1) return;
+      setParaRecipients(prev => prev.filter(r => r.id !== id));
+    } else if (section === 'cc') {
+      setCcRecipients(prev => prev.filter(r => r.id !== id));
+    } else {
+      setCcoRecipients(prev => prev.filter(r => r.id !== id));
+    }
   };
 
-  const handleRecipientChange = (id: string, text: string) => {
-    setRecipients(prev =>
-      prev.map(r => (r.id === id ? { ...r, mailto: text.toLowerCase(), error: undefined, status: 'idle' } : r))
-    );
+  const handleRecipientChange = (section: RecipientSection, id: string, text: string) => {
+    const updater = (prev: EmailRecipientItem[]) =>
+      prev.map(r => (r.id === id ? { ...r, email: text.toLowerCase(), error: undefined } : r));
+
+    if (section === 'para') {
+      setParaRecipients(updater);
+    } else if (section === 'cc') {
+      setCcRecipients(updater);
+    } else {
+      setCcoRecipients(updater);
+    }
   };
 
-  const handleSendEmails = async () => {
+  const handleOpenEmailClient = async () => {
     if (!reportId) return;
 
-    // 1. Validar todos os campos antes de iniciar o envio
+    // 1. Validar e coletar endereços com detecção de duplicados
     let hasErrors = false;
-    const validatedRecipients = recipients.map((r, index) => {
-      const mailto = r.mailto.trim().toLowerCase();
-      const validation = validateEmail(mailto);
-      if (!validation.isValid) {
-        hasErrors = true;
-        return {
-          ...r,
-          mailto,
-          error: `Campo ${index + 1}: ${validation.error || 'E-mail inválido'}`,
-        };
-      }
-      return { ...r, mailto, error: undefined };
-    });
+    const seenEmails = new Set<string>();
 
-    setRecipients(validatedRecipients);
+    const validateList = (list: EmailRecipientItem[], sectionLabel: string, isRequired: boolean) => {
+      return list.map((item, index) => {
+        const email = item.email.trim().toLowerCase();
 
-    if (hasErrors) {
+        // Se for CC ou CCO e o campo estiver vazio, apenas limpa
+        if (!isRequired && !email) {
+          return { ...item, email: '', error: undefined };
+        }
+
+        const validation = validateEmail(email);
+        if (!validation.isValid) {
+          hasErrors = true;
+          return {
+            ...item,
+            email,
+            error: `${sectionLabel} ${index + 1}: ${validation.error || 'E-mail inválido'}`,
+          };
+        }
+
+        if (seenEmails.has(email)) {
+          hasErrors = true;
+          return {
+            ...item,
+            email,
+            error: `E-mail duplicado (${email})`,
+          };
+        }
+
+        seenEmails.add(email);
+        return { ...item, email, error: undefined };
+      });
+    };
+
+    const validatedPara = validateList(paraRecipients, 'Para', true);
+    const validatedCc = validateList(ccRecipients, 'CC', false);
+    const validatedCco = validateList(ccoRecipients, 'CCO', false);
+
+    setParaRecipients(validatedPara);
+    setCcRecipients(validatedCc);
+    setCcoRecipients(validatedCco);
+
+    const finalPara = validatedPara.map(r => r.email.trim()).filter(Boolean);
+    const finalCc = validatedCc.map(r => r.email.trim()).filter(Boolean);
+    const finalCco = validatedCco.map(r => r.email.trim()).filter(Boolean);
+
+    if (finalPara.length === 0) {
       Alert.alert(
-        'Destinatários inválidos',
-        'Por favor, corrija os endereços de e-mail destacados antes de prosseguir com o envio.'
+        'Destinatário obrigatório',
+        'Informe pelo menos um endereço de e-mail válido no campo "Para".'
       );
       return;
     }
 
-    // 2. Verificar se existe sessão ativa antes de invocar
+    if (hasErrors) {
+      Alert.alert(
+        'Destinatários inválidos',
+        'Por favor, corrija os endereços destacados antes de prosseguir com o envio.'
+      );
+      return;
+    }
+
+    // 2. Verificar se existe sessão ativa (necessária para gerar URL assinada de anexo no bucket privado)
     const { data: { session } } = await supabase.auth.getSession();
     const isSessionExpired = !session || (session.expires_at ? session.expires_at * 1000 < Date.now() : false);
 
     if (isSessionExpired) {
-      console.log('[Auth] Sessão ausente ou expirada. Invocação não realizada.');
       Alert.alert(
         'Sessão expirada',
         'Sua sessão não está ativa ou expirou. Por favor, faça login novamente no aplicativo.'
@@ -387,107 +453,63 @@ export default function ReportForm({ route }: Props) {
       return;
     }
 
-    // 3. Iniciar envio individual para cada destinatário
-    setIsSendingEmail(true);
-
-    const results: Array<{ mailto: string; success: boolean; error?: string }> = [];
-
+    // 3. Montar dados para o envio
     const reportIndex = patient?.reports.findIndex(r => r.id === reportId) ?? -1;
-    const reportNumber = reportIndex >= 0 ? reportIndex + 1 : '';
-    const toSubject = `Relatório de Evolução ${reportNumber} - ${patient?.nome_civil ?? 'Paciente'}`;
-    const toHtml = `
-      <h2>Relatório de Evolução do Paciente</h2>
-      <p><strong>Paciente:</strong> ${patient?.nome_civil ?? ''}</p>
-      <p><strong>Nº Prontuário:</strong> ${patient?.prontuario ?? ''}</p>
-      <p><strong>Status:</strong> ${reportStatus === 'finalizado' ? 'Finalizado' : 'Em Andamento'}</p>
-      <hr/>
-      <h3>Transcrição / Relatório:</h3>
-      <p>${relatorio ? relatorio.replace(/\n/g, '<br/>') : '<em>Sem transcrição</em>'}</p>
-      ${comentarios ? `<h3>Comentários:</h3><p>${comentarios.replace(/\n/g, '<br/>')}</p>` : ''}
-    `;
+    const reportNumber = reportIndex >= 0 ? reportIndex + 1 : undefined;
 
-    for (let i = 0; i < validatedRecipients.length; i++) {
-      const item = validatedRecipients[i];
-      const mailto = item.mailto;
-
-      setRecipients(prev =>
-        prev.map(r => (r.id === item.id ? { ...r, status: 'sending', error: undefined } : r))
-      );
-
-      try {
-        const to = mailto;
-        const subject = toSubject;
-        const html = toHtml;
-
-        const { data, error } = await supabase.functions.invoke('resend-email', {
-          body: { to, subject, html, relatorio_id: reportId },
-        });
-
-        if (error) {
-          if (error instanceof FunctionsHttpError) {
-            console.log('STATUS:', error.context.status);
-            console.log('RESPOSTA:', await error.context.text());
-          } else {
-            console.log('ERRO DE REDE/RELAY:', error.message);
+    const conteudo = montarConteudoEmail({
+      numeroRelatorio: reportNumber,
+      prontuario: patient?.prontuario,
+      nomeCivil: patient?.nome_civil,
+      nomeSocial: patient?.nome_social,
+      transcricao: relatorio,
+      comentario: comentarios,
+      anexo: fileUri
+        ? {
+            uri: fileUri,
+            nome: fileName,
+            mimeType: fileType,
           }
+        : undefined,
+    });
 
-          const userFriendlyMsg =
-            error instanceof FunctionsHttpError
-              ? error.context.status === 401
-                ? 'Acesso não autorizado: verifique sua sessão.'
-                : error.context.status === 404
-                ? 'Função de envio não encontrada no servidor.'
-                : error.context.status === 400
-                ? 'Requisição recusada pelo servidor.'
-                : 'O servidor não pôde concluir o envio.'
-              : 'Falha de conexão com o servidor. Verifique sua internet.';
+    const destinatarios: Destinatarios = {
+      para: finalPara,
+      cc: finalCc,
+      cco: finalCco,
+    };
 
-          results.push({ mailto, success: false, error: userFriendlyMsg });
-          setRecipients(prev =>
-            prev.map(r => (r.id === item.id ? { ...r, status: 'error', errorMessage: userFriendlyMsg } : r))
-          );
+    setIsPreparingEmail(true);
+
+    try {
+      const resultado = await compartilharPorEmail(conteudo, destinatarios);
+
+      if (resultado.sucesso) {
+        setEmailModalVisible(false);
+
+        // Feedback condicionado à plataforma (Android sempre retorna 'sent' devido a limitações de intents)
+        if (Platform.OS === 'ios') {
+          if (resultado.status === 'sent') {
+            Alert.alert('E-mail enviado', 'O relatório foi transmitido pelo aplicativo de e-mail.');
+          } else if (resultado.status === 'saved') {
+            Alert.alert('Rascunho salvo', 'A mensagem foi salva na sua pasta de rascunhos.');
+          }
         } else {
-          results.push({ mailto, success: true });
-          setRecipients(prev =>
-            prev.map(r => (r.id === item.id ? { ...r, status: 'success' } : r))
+          Alert.alert(
+            'Compositor de e-mail',
+            'O aplicativo de e-mail foi aberto com os dados do relatório.'
           );
         }
-      } catch (invokeErr: any) {
-        console.log('ERRO DE REDE/RELAY:', invokeErr?.message || String(invokeErr));
-        const userFriendlyMsg = 'Falha inesperada ao tentar se comunicar com o servidor de e-mail.';
-        results.push({ mailto, success: false, error: userFriendlyMsg });
-        setRecipients(prev =>
-          prev.map(r => (r.id === item.id ? { ...r, status: 'error', errorMessage: userFriendlyMsg } : r))
+      } else if (!resultado.cancelado && resultado.erro) {
+        Alert.alert(
+          'Falha ao abrir e-mail',
+          resultado.erro || 'Não foi possível abrir o compositor de e-mail.'
         );
       }
-    }
-
-    setIsSendingEmail(false);
-
-    const successes = results.filter(r => r.success);
-    const failures = results.filter(r => !r.success);
-
-    if (failures.length === 0) {
-      Alert.alert(
-        'Envio concluído',
-        `O relatório foi enviado com sucesso para ${successes.length} ${successes.length === 1 ? 'destinatário' : 'destinatários'}.`,
-        [
-          {
-            text: 'OK',
-            onPress: () => setEmailModalVisible(false),
-          },
-        ]
-      );
-    } else if (successes.length === 0) {
-      Alert.alert(
-        'Falha no envio',
-        `Não foi possível enviar o e-mail para os destinatários solicitados.\n\nMotivo: ${failures[0]?.error || 'Erro no serviço de e-mail'}`
-      );
-    } else {
-      Alert.alert(
-        'Envio com pendências',
-        `O relatório foi enviado com sucesso para ${successes.length} destinatário(s), mas falhou para ${failures.length} destinatário(s).\n\nVerifique os campos destacados e tente novamente.`
-      );
+    } catch (err: any) {
+      Alert.alert('Erro', err?.message || 'Falha inesperada ao preparar o e-mail.');
+    } finally {
+      setIsPreparingEmail(false);
     }
   };
 
@@ -669,7 +691,7 @@ export default function ReportForm({ route }: Props) {
         transparent
         animationType="fade"
         onRequestClose={() => {
-          if (!isSendingEmail) setEmailModalVisible(false);
+          if (!isPreparingEmail) setEmailModalVisible(false);
         }}
       >
         <View style={styles.modalBackdrop}>
@@ -685,7 +707,7 @@ export default function ReportForm({ route }: Props) {
                 </Text>
                 <TouchableOpacity
                   onPress={() => setEmailModalVisible(false)}
-                  disabled={isSendingEmail}
+                  disabled={isPreparingEmail}
                   hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
                 >
                   <Feather name="x" size={22} color={colors.text} />
@@ -693,11 +715,13 @@ export default function ReportForm({ route }: Props) {
               </View>
 
               <Text style={[styles.modalInstructions, { color: isDark ? '#ddd' : '#333' }]}>
-                Digite o endereço de email do destinatário:
+                Preencha os destinatários para abrir no app de e-mail:
               </Text>
 
               <ScrollView style={styles.recipientsScrollView} keyboardShouldPersistTaps="handled">
-                {recipients.map((item, index) => (
+                {/* Seção Para (Obrigatório) */}
+                <Text style={[styles.sectionSubtitle, { color: colors.text }]}>Para *</Text>
+                {paraRecipients.map((item) => (
                   <View key={item.id} style={styles.recipientBlock}>
                     <View style={styles.recipientInputRow}>
                       <TextInput
@@ -715,49 +739,157 @@ export default function ReportForm({ route }: Props) {
                         autoCapitalize="none"
                         autoCorrect={false}
                         keyboardType="email-address"
-                        value={item.mailto}
-                        editable={!isSendingEmail}
-                        onChangeText={(t) => handleRecipientChange(item.id, t)}
+                        value={item.email}
+                        editable={!isPreparingEmail}
+                        onChangeText={(t) => handleRecipientChange('para', item.id, t)}
                       />
-                      {recipients.length > 1 && (
+                      {paraRecipients.length > 1 && (
                         <TouchableOpacity
-                          style={[styles.removeRecipientBtn, { opacity: isSendingEmail ? 0.4 : 1 }]}
-                          onPress={() => handleRemoveRecipient(item.id)}
-                          disabled={isSendingEmail}
+                          style={[styles.removeRecipientBtn, { opacity: isPreparingEmail ? 0.4 : 1 }]}
+                          onPress={() => handleRemoveRecipient('para', item.id)}
+                          disabled={isPreparingEmail}
                         >
                           <Feather name="trash-2" size={18} color="#d9534f" />
                         </TouchableOpacity>
                       )}
-
-                      {item.status === 'sending' && (
-                        <ActivityIndicator size="small" color="#1d70b8" style={{ marginLeft: 8 }} />
-                      )}
-                      {item.status === 'success' && (
-                        <Feather name="check-circle" size={20} color="#25D366" style={{ marginLeft: 8 }} />
-                      )}
-                      {item.status === 'error' && (
-                        <Feather name="alert-circle" size={20} color="#d9534f" style={{ marginLeft: 8 }} />
-                      )}
                     </View>
-
                     {item.error ? (
                       <Text style={styles.recipientErrorText}>{item.error}</Text>
-                    ) : item.errorMessage ? (
-                      <Text style={styles.recipientErrorText}>{item.errorMessage}</Text>
                     ) : null}
                   </View>
                 ))}
 
-                {/* Botão + Adicionar novo e-mail */}
                 <TouchableOpacity
-                  style={[styles.addEmailBtn, { borderColor: colors.blueBtn, opacity: isSendingEmail ? 0.5 : 1 }]}
-                  onPress={handleAddRecipient}
-                  disabled={isSendingEmail}
+                  style={[styles.addEmailSmallBtn, { borderColor: colors.blueBtn, opacity: isPreparingEmail ? 0.5 : 1 }]}
+                  onPress={() => handleAddRecipient('para')}
+                  disabled={isPreparingEmail}
                 >
-                  <Text style={[styles.addEmailBtnText, { color: colors.blueBtn }]}>
-                    + Adicionar novo e-mail
+                  <Text style={[styles.addEmailSmallBtnText, { color: colors.blueBtn }]}>
+                    + Adicionar destinatário em Para
                   </Text>
                 </TouchableOpacity>
+
+                {/* Seção CC (Com Cópia) */}
+                <View style={styles.sectionHeaderRow}>
+                  <Text style={[styles.sectionSubtitle, { color: colors.text }]}>CC (Com Cópia)</Text>
+                  {ccRecipients.length === 0 && (
+                    <TouchableOpacity
+                      onPress={() => handleAddRecipient('cc')}
+                      disabled={isPreparingEmail}
+                    >
+                      <Text style={[styles.addSectionLink, { color: colors.blueBtn }]}>+ Adicionar CC</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+
+                {ccRecipients.map((item) => (
+                  <View key={item.id} style={styles.recipientBlock}>
+                    <View style={styles.recipientInputRow}>
+                      <TextInput
+                        style={[
+                          styles.recipientInput,
+                          {
+                            backgroundColor: colors.inputBg,
+                            color: colors.text,
+                            borderColor: item.error ? '#d9534f' : 'transparent',
+                            borderWidth: item.error ? 1 : 0,
+                          },
+                        ]}
+                        placeholder="cc@exemplo.com"
+                        placeholderTextColor={isDark ? '#aaa' : '#666'}
+                        autoCapitalize="none"
+                        autoCorrect={false}
+                        keyboardType="email-address"
+                        value={item.email}
+                        editable={!isPreparingEmail}
+                        onChangeText={(t) => handleRecipientChange('cc', item.id, t)}
+                      />
+                      <TouchableOpacity
+                        style={[styles.removeRecipientBtn, { opacity: isPreparingEmail ? 0.4 : 1 }]}
+                        onPress={() => handleRemoveRecipient('cc', item.id)}
+                        disabled={isPreparingEmail}
+                      >
+                        <Feather name="trash-2" size={18} color="#d9534f" />
+                      </TouchableOpacity>
+                    </View>
+                    {item.error ? (
+                      <Text style={styles.recipientErrorText}>{item.error}</Text>
+                    ) : null}
+                  </View>
+                ))}
+
+                {ccRecipients.length > 0 && (
+                  <TouchableOpacity
+                    style={[styles.addEmailSmallBtn, { borderColor: colors.blueBtn, opacity: isPreparingEmail ? 0.5 : 1 }]}
+                    onPress={() => handleAddRecipient('cc')}
+                    disabled={isPreparingEmail}
+                  >
+                    <Text style={[styles.addEmailSmallBtnText, { color: colors.blueBtn }]}>
+                      + Adicionar outro CC
+                    </Text>
+                  </TouchableOpacity>
+                )}
+
+                {/* Seção CCO (Cópia Oculta) */}
+                <View style={styles.sectionHeaderRow}>
+                  <Text style={[styles.sectionSubtitle, { color: colors.text }]}>CCO (Cópia Oculta)</Text>
+                  {ccoRecipients.length === 0 && (
+                    <TouchableOpacity
+                      onPress={() => handleAddRecipient('cco')}
+                      disabled={isPreparingEmail}
+                    >
+                      <Text style={[styles.addSectionLink, { color: colors.blueBtn }]}>+ Adicionar CCO</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+
+                {ccoRecipients.map((item) => (
+                  <View key={item.id} style={styles.recipientBlock}>
+                    <View style={styles.recipientInputRow}>
+                      <TextInput
+                        style={[
+                          styles.recipientInput,
+                          {
+                            backgroundColor: colors.inputBg,
+                            color: colors.text,
+                            borderColor: item.error ? '#d9534f' : 'transparent',
+                            borderWidth: item.error ? 1 : 0,
+                          },
+                        ]}
+                        placeholder="cco@exemplo.com"
+                        placeholderTextColor={isDark ? '#aaa' : '#666'}
+                        autoCapitalize="none"
+                        autoCorrect={false}
+                        keyboardType="email-address"
+                        value={item.email}
+                        editable={!isPreparingEmail}
+                        onChangeText={(t) => handleRecipientChange('cco', item.id, t)}
+                      />
+                      <TouchableOpacity
+                        style={[styles.removeRecipientBtn, { opacity: isPreparingEmail ? 0.4 : 1 }]}
+                        onPress={() => handleRemoveRecipient('cco', item.id)}
+                        disabled={isPreparingEmail}
+                      >
+                        <Feather name="trash-2" size={18} color="#d9534f" />
+                      </TouchableOpacity>
+                    </View>
+                    {item.error ? (
+                      <Text style={styles.recipientErrorText}>{item.error}</Text>
+                    ) : null}
+                  </View>
+                ))}
+
+                {ccoRecipients.length > 0 && (
+                  <TouchableOpacity
+                    style={[styles.addEmailSmallBtn, { borderColor: colors.blueBtn, opacity: isPreparingEmail ? 0.5 : 1 }]}
+                    onPress={() => handleAddRecipient('cco')}
+                    disabled={isPreparingEmail}
+                  >
+                    <Text style={[styles.addEmailSmallBtnText, { color: colors.blueBtn }]}>
+                      + Adicionar outro CCO
+                    </Text>
+                  </TouchableOpacity>
+                )}
 
                 <Text style={[styles.savedReportNotice, { color: isDark ? '#aaa' : '#777' }]}>
                   * O e-mail enviará a versão persistida deste relatório salva no sistema.
@@ -769,7 +901,7 @@ export default function ReportForm({ route }: Props) {
                 <TouchableOpacity
                   style={[styles.modalCancelBtn, { borderColor: isDark ? '#555' : '#ccc' }]}
                   onPress={() => setEmailModalVisible(false)}
-                  disabled={isSendingEmail}
+                  disabled={isPreparingEmail}
                 >
                   <Text style={[styles.modalCancelBtnText, { color: colors.text }]}>Cancelar</Text>
                 </TouchableOpacity>
@@ -777,20 +909,20 @@ export default function ReportForm({ route }: Props) {
                 <TouchableOpacity
                   style={[
                     styles.modalConfirmBtn,
-                    { backgroundColor: isSendingEmail ? '#888' : colors.blueBtn },
+                    { backgroundColor: isPreparingEmail ? '#888' : colors.blueBtn },
                   ]}
-                  onPress={handleSendEmails}
-                  disabled={isSendingEmail}
+                  onPress={handleOpenEmailClient}
+                  disabled={isPreparingEmail}
                 >
-                  {isSendingEmail ? (
+                  {isPreparingEmail ? (
                     <>
                       <ActivityIndicator size="small" color="#ffffff" style={{ marginRight: 8 }} />
-                      <Text style={styles.modalConfirmBtnText}>Enviando...</Text>
+                      <Text style={styles.modalConfirmBtnText}>Abrindo...</Text>
                     </>
                   ) : (
                     <>
-                      <Text style={styles.modalConfirmBtnText}>Confirmar envio</Text>
-                      <Feather name="send" size={16} color="#ffffff" style={{ marginLeft: 6 }} />
+                      <Text style={styles.modalConfirmBtnText}>Abrir e-mail</Text>
+                      <Feather name="mail" size={16} color="#ffffff" style={{ marginLeft: 6 }} />
                     </>
                   )}
                 </TouchableOpacity>
@@ -912,6 +1044,37 @@ const styles = StyleSheet.create({
     fontSize: 12,
     marginTop: 4,
     marginLeft: 4,
+  },
+  sectionSubtitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    marginTop: 8,
+    marginBottom: 6,
+  },
+  sectionHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginTop: 10,
+    marginBottom: 6,
+  },
+  addSectionLink: {
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  addEmailSmallBtn: {
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderStyle: 'dashed',
+    alignSelf: 'flex-start',
+    marginTop: 4,
+    marginBottom: 10,
+  },
+  addEmailSmallBtnText: {
+    fontSize: 12,
+    fontWeight: '600',
   },
   addEmailBtn: {
     width: '100%',

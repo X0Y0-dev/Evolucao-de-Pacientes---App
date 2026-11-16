@@ -13,11 +13,14 @@ O serviço Python/FastAPI deve ser executado escutando em todas as interfaces de
 ```bash
 cd backend-ocr
 
-# Opção A: Com Docker (Recomendado)
+# Opção A: Com Docker Compose (Recomendado)
+docker compose up --build
+
+# Opção B: Com Docker Run direto
 docker build -t ocr-service .
 docker run -p 8000:8000 ocr-service
 
-# Opção B: Direto com Python
+# Opção C: Direto com Python
 python -m venv .venv
 # Windows: .venv\Scripts\activate | Linux/Mac: source .venv/bin/activate
 pip install -r requirements.txt

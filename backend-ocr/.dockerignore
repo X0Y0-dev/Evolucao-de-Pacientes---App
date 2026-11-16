@@ -1,5 +1,30 @@
-__pycache__
+# Ambientes virtuais locais
+venv/
+.venv/
+
+# Caches do Python
+__pycache__/
 *.pyc
-.env
-.git
-.vscode
+*.pyo
+*.pyd
+
+# Variáveis de ambiente e segredos locais
+.env*
+
+# Arquivos temporários e do sistema
+*.tmp
+temp_*
+.DS_Store
+Thumbs.db
+
+# Controle de versão e IDEs
+.git/
+.gitignore
+.vscode/
+.idea/
+
+# Documentação e arquivos de build do Docker
+README.md
+Dockerfile
+docker-compose.yml
+.dockerignore

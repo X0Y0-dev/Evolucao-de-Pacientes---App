@@ -32,7 +32,9 @@
       }
     },
     "plugins": [
-      "expo-status-bar"
+      "expo-status-bar",
+      "expo-mail-composer",
+      "expo-updates"
     ]
   }
 }

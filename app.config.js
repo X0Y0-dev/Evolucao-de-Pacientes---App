@@ -5,6 +5,12 @@ module.exports = ({ config }) => {
 
   return {
     ...config,
+    updates: {
+      url: 'https://u.expo.dev/2aa52259-0ba5-44d1-91e6-0feb1a4ab307',
+    },
+    runtimeVersion: {
+      policy: 'fingerprint',
+    },
     android: {
       ...config.android,
       ...(isDev ? { usesCleartextTraffic: true } : {}),

@@ -12,6 +12,7 @@
 import { File as ExpoFile } from 'expo-file-system';
 import * as FileSystem from 'expo-file-system/legacy';
 import { FileSystemUploadType } from 'expo-file-system/legacy';
+import { supabase } from '../lib/supabase';
 
 // ---------------------------------------------------------------------------
 // Configuração
@@ -130,24 +131,36 @@ function handleHttpError(status: number, rawBody: string): never {
     // rawBody não é JSON, usa fallback com base no status
   }
 
-  if (!detail) {
-    if (status === 413) {
-      detail = 'O arquivo excede o limite de tamanho permitido pelo servidor de OCR.';
-    } else if (status === 415) {
-      detail = 'Tipo de arquivo não suportado pelo servidor de OCR. Envie PDF, PNG ou JPG/JPEG.';
-    } else if (status === 422) {
-      detail =
-        'O arquivo não pôde ser processado pelo servidor de OCR (pode estar corrompido, protegido por senha ou exceder o limite de páginas).';
-    } else if (status >= 500) {
-      detail = 'Erro interno no servidor de OCR. Tente novamente em alguns instantes.';
-    } else {
-      detail = `Erro HTTP ${status} do servidor de OCR.`;
-    }
+  let retryable = false;
+
+  if (status === 401) {
+    detail = 'Sessão expirada, faça login novamente.';
+    retryable = false;
+  } else if (status === 503) {
+    detail = detail || 'O servidor de OCR está ocupado ou temporariamente indisponível. Tente novamente em alguns instantes.';
+    retryable = true;
+  } else if (status === 413) {
+    detail = detail || 'O arquivo excede o limite de tamanho permitido pelo servidor de OCR.';
+    retryable = false;
+  } else if (status === 415) {
+    detail = detail || 'Tipo de arquivo não suportado pelo servidor de OCR. Envie PDF, PNG ou JPG/JPEG.';
+    retryable = false;
+  } else if (status === 422) {
+    detail =
+      detail ||
+      'O arquivo não pôde ser processado pelo servidor de OCR (pode estar corrompido, protegido por senha ou exceder o limite de páginas).';
+    retryable = false;
+  } else if (status >= 500) {
+    detail = detail || 'Erro interno no servidor de OCR. Tente novamente em alguns instantes.';
+    retryable = true;
+  } else {
+    detail = detail || `Erro HTTP ${status} do servidor de OCR.`;
+    retryable = false;
   }
 
   const error: OcrError = {
     message: detail,
-    retryable: status >= 500,
+    retryable,
     isHttpError: true,
   };
   throw error;
@@ -238,11 +251,22 @@ export async function extrairTextoDoArquivo(
   fileName?: string,
   mimeType?: string,
 ): Promise<OcrResult> {
+  // 1. Validar autenticação do usuário antes de qualquer operação de rede
+  const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+  const token = session?.access_token;
+
+  if (!token || sessionError) {
+    throw {
+      message: 'Sessão expirada, faça login novamente.',
+      retryable: false,
+    } satisfies OcrError;
+  }
+
   const url = getOcrEndpointUrl();
   const safeFileName = getSafeFileName(fileName, mimeType);
   const safeMimeType = inferMimeType(safeFileName, mimeType);
 
-  // 1. Validar tipo antes do envio
+  // 2. Validar tipo antes do envio
   if (!ALLOWED_MIME_TYPES.has(safeMimeType)) {
     throw {
       message: 'Tipo de arquivo não suportado. Envie PDF, PNG ou JPG/JPEG.',
@@ -250,7 +274,7 @@ export async function extrairTextoDoArquivo(
     } satisfies OcrError;
   }
 
-  // 2. Validar existência e tamanho local do arquivo antes do upload
+  // 3. Validar existência e tamanho local do arquivo antes do upload
   try {
     const info = await FileSystem.getInfoAsync(fileUri);
     if (!info.exists) {
@@ -297,6 +321,9 @@ export async function extrairTextoDoArquivo(
     const response = await fetch(url, {
       method: 'POST',
       body: formData,
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
       signal: controller.signal,
       // Não definir Content-Type manualmente (o fetch gera o boundary)
     });
@@ -322,7 +349,7 @@ export async function extrairTextoDoArquivo(
 
     return data;
   } catch (err: any) {
-    // Se o backend respondeu com erro HTTP (ex: 413, 415, 422), não retenta Plano B
+    // Se o backend respondeu com erro HTTP (ex: 401, 413, 415, 422, 503), não retenta Plano B
     if (err && err.isHttpError) {
       throw err;
     }
@@ -347,6 +374,9 @@ export async function extrairTextoDoArquivo(
       httpMethod: 'POST',
       uploadType: FileSystemUploadType.MULTIPART,
       mimeType: safeMimeType,
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
     });
 
     const timeoutPromise = new Promise<never>((_, reject) => {

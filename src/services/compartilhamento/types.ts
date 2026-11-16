@@ -20,9 +20,25 @@ export interface ConteudoCompartilhamento {
   anexo?: AnexoCompartilhamento;
 }
 
+export interface Destinatarios {
+  para: string[];
+  cc: string[];
+  cco: string[];
+}
+
+export interface ResultadoCompartilhamentoEmail {
+  sucesso: boolean;
+  cancelado: boolean;
+  status?: string;
+  erro?: string;
+  aviso?: string;
+}
+
 export interface DadosCasoCompartilhamento {
   numeroRelatorio?: number | string;
   prontuario?: string;
+  nomeCivil?: string;
+  nomeSocial?: string;
   transcricao: string;
   comentario?: string;
   anexo?: AnexoCompartilhamento;
