@@ -43,6 +43,10 @@ O arquivo `docker-compose.yml` lê automaticamente as variáveis de ambiente do 
 ```bash
 docker compose up --build
 ```
+Para rodar simulando os limites de produção do Railway (512 MB de RAM e 1 vCPU):
+```bash
+docker compose -f docker-compose.yml -f docker-compose.limite.yml up --build
+```
 Para rodar em segundo plano:
 ```bash
 docker compose up -d

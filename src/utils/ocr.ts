@@ -167,7 +167,65 @@ function handleHttpError(status: number, rawBody: string): never {
 }
 
 /**
+ * Determina se o erro ocorrido no Caminho Principal justifica o acionamento do Plano B.
+ *
+ * O Plano B (FileSystem.uploadAsync nativo) existe exclusivamente para contornar
+ * limitações do runtime JavaScript/Hermes na montagem do FormData/Blob (ex.: "Unsupported FormDataPart").
+ *
+ * NÃO aciona o Plano B em caso de:
+ * - Respostas HTTP do servidor (4xx, 5xx) — já recebidas e tratadas.
+ * - Timeout ou cancelamento manual (AbortError, TimeoutError).
+ * - Queda de conexão, socket fechado ou falhas de rede ("network request failed", "connection reset", etc.).
+ * Reenviar o arquivo nesses casos duplicaria a carga de um servidor que pode estar ocupado, reiniciando ou sobrecarregado.
+ */
+function deveAcionarPlanoB(err: any): boolean {
+  if (!err) return false;
+  if (err.isHttpError) return false;
+
+  const name = String(err.name || '').toLowerCase();
+  if (name === 'aborterror' || name === 'timeouterror') {
+    return false;
+  }
+
+  const msg = String(err.message || err || '').toLowerCase();
+
+  // Erros de timeout ou rede: NÃO acionar Plano B
+  if (
+    msg.includes('timeout') ||
+    msg.includes('timed out') ||
+    msg.includes('abort') ||
+    msg.includes('network request failed') ||
+    msg.includes('failed to connect') ||
+    msg.includes('connection refused') ||
+    msg.includes('connection reset') ||
+    msg.includes('econnrefused') ||
+    msg.includes('econnreset') ||
+    msg.includes('enotfound') ||
+    msg.includes('socket') ||
+    msg.includes('networkerror')
+  ) {
+    return false;
+  }
+
+  // Erros conhecidos de incompatibilidade de FormData/Blob no React Native/Hermes:
+  if (
+    msg.includes('unsupported formdatapart') ||
+    msg.includes('filenotfound') ||
+    msg.includes('invalid file uri') ||
+    msg.includes('cannot open file')
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
+/**
  * Classifica exceções em mensagens de erro claras e distintas.
+ * - Timeout -> "O servidor demorou demais para responder."
+ * - Conexão encerrada durante processamento -> Mensagem honesta sem culpar internet
+ * - Falha de alcance inicial -> "Não foi possível alcançar o servidor de OCR."
+ * - Preparação do arquivo -> "Não foi possível preparar o arquivo para envio."
  */
 function classifyError(err: any, primaryError?: unknown): OcrError {
   if (err && typeof err === 'object' && 'retryable' in err && 'message' in err) {
@@ -176,13 +234,14 @@ function classifyError(err: any, primaryError?: unknown): OcrError {
 
   const errMsg = String(err?.message || err || '').toLowerCase();
   const primaryMsg = String((primaryError as any)?.message || primaryError || '').toLowerCase();
+  const combined = `${errMsg} ${primaryMsg}`;
 
   // 1. Timeout
   if (
     err?.name === 'AbortError' ||
     err?.name === 'TimeoutError' ||
-    errMsg.includes('timeout') ||
-    errMsg.includes('timed out')
+    combined.includes('timeout') ||
+    combined.includes('timed out')
   ) {
     return {
       message: 'O servidor demorou demais para responder.',
@@ -192,13 +251,12 @@ function classifyError(err: any, primaryError?: unknown): OcrError {
 
   // 2. Erro de preparação do arquivo
   if (
-    errMsg.includes('unsupported formdatapart') ||
-    errMsg.includes('filenotfound') ||
-    errMsg.includes('no such file') ||
-    errMsg.includes('does not exist') ||
-    errMsg.includes('cannot open file') ||
-    errMsg.includes('invalid file uri') ||
-    (primaryMsg.includes('unsupported formdatapart') && !errMsg.includes('connect'))
+    combined.includes('unsupported formdatapart') ||
+    combined.includes('filenotfound') ||
+    combined.includes('no such file') ||
+    combined.includes('does not exist') ||
+    combined.includes('cannot open file') ||
+    combined.includes('invalid file uri')
   ) {
     return {
       message: 'Não foi possível preparar o arquivo para envio.',
@@ -206,18 +264,30 @@ function classifyError(err: any, primaryError?: unknown): OcrError {
     };
   }
 
-  // 3. Erro de rede (falha ao alcançar o servidor)
+  // 3. Conexão encerrada durante o processamento (servidor reiniciando, ocupado ou socket abortado)
   if (
-    errMsg.includes('network request failed') ||
-    errMsg.includes('failed to connect') ||
-    errMsg.includes('econnrefused') ||
-    errMsg.includes('enotfound') ||
-    errMsg.includes('networkerror') ||
-    errMsg.includes('connection refused') ||
-    errMsg.includes('could not connect') ||
-    errMsg.includes('sockettimeout') ||
-    errMsg.includes('software caused connection abort') ||
-    errMsg.includes('connectexception')
+    combined.includes('network request failed') ||
+    combined.includes('connection reset') ||
+    combined.includes('econnreset') ||
+    combined.includes('software caused connection abort') ||
+    combined.includes('socket closed') ||
+    combined.includes('broken pipe')
+  ) {
+    return {
+      message:
+        'A conexão com o servidor foi encerrada durante o processamento. O servidor pode estar ocupado, reiniciando ou temporariamente indisponível.',
+      retryable: true,
+    };
+  }
+
+  // 4. Erro de rede ao tentar conectar inicialmente (servidor inacessível / offline)
+  if (
+    combined.includes('failed to connect') ||
+    combined.includes('connection refused') ||
+    combined.includes('could not connect') ||
+    combined.includes('econnrefused') ||
+    combined.includes('enotfound') ||
+    combined.includes('networkerror')
   ) {
     return {
       message: 'Não foi possível alcançar o servidor de OCR.',
@@ -227,7 +297,7 @@ function classifyError(err: any, primaryError?: unknown): OcrError {
 
   // Fallback padrão
   return {
-    message: 'Não foi possível alcançar o servidor de OCR.',
+    message: 'Ocorreu uma falha na comunicação com o servidor de OCR.',
     retryable: true,
   };
 }
@@ -306,6 +376,9 @@ export async function extrairTextoDoArquivo(
   // -------------------------------------------------------------------------
   // Caminho Principal: `File` do expo-file-system + `FormData` + `fetch`
   // -------------------------------------------------------------------------
+  let primaryTimeoutId: ReturnType<typeof setTimeout> | null = null;
+  const controller = new AbortController();
+
   try {
     if (__DEV__) {
       console.log('[OCR] Tentando envio via Caminho Principal (new File + FormData + fetch)...');
@@ -315,8 +388,7 @@ export async function extrairTextoDoArquivo(
     const formData = new FormData();
     formData.append('file', expoFile as unknown as Blob, safeFileName);
 
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+    primaryTimeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
     const response = await fetch(url, {
       method: 'POST',
@@ -327,8 +399,6 @@ export async function extrairTextoDoArquivo(
       signal: controller.signal,
       // Não definir Content-Type manualmente (o fetch gera o boundary)
     });
-
-    clearTimeout(timeoutId);
 
     if (__DEV__) {
       console.log('[OCR] Resposta Caminho Principal status:', response.status);
@@ -354,20 +424,33 @@ export async function extrairTextoDoArquivo(
       throw err;
     }
 
+    // Só aciona o Plano B se o erro for estritamente de preparação do arquivo/FormData
+    // Timeout, abort, falhas de rede ou conexão encerrada NÃO acionam o Plano B
+    if (!deveAcionarPlanoB(err)) {
+      throw classifyError(err);
+    }
+
     primaryError = err;
 
     if (__DEV__) {
       console.log(
-        '[OCR] Caminho Principal não concluiu o envio. Erro:',
+        '[OCR] Caminho Principal apresentou erro de preparação de FormData. Erro:',
         err?.message || err
       );
       console.log('[OCR] Acionando Plano B (FileSystem.uploadAsync nativo)...');
+    }
+  } finally {
+    if (primaryTimeoutId !== null) {
+      clearTimeout(primaryTimeoutId);
+      primaryTimeoutId = null;
     }
   }
 
   // -------------------------------------------------------------------------
   // Plano B: `FileSystem.uploadAsync` com `FileSystemUploadType.MULTIPART`
   // -------------------------------------------------------------------------
+  let backupTimeoutId: ReturnType<typeof setTimeout> | null = null;
+
   try {
     const uploadPromise = FileSystem.uploadAsync(url, fileUri, {
       fieldName: 'file',
@@ -380,7 +463,7 @@ export async function extrairTextoDoArquivo(
     });
 
     const timeoutPromise = new Promise<never>((_, reject) => {
-      setTimeout(() => {
+      backupTimeoutId = setTimeout(() => {
         const timeoutErr = new Error('O servidor demorou demais para responder.');
         timeoutErr.name = 'TimeoutError';
         reject(timeoutErr);
@@ -425,5 +508,10 @@ export async function extrairTextoDoArquivo(
     }
 
     throw classifyError(err, primaryError);
+  } finally {
+    if (backupTimeoutId !== null) {
+      clearTimeout(backupTimeoutId);
+      backupTimeoutId = null;
+    }
   }
 }

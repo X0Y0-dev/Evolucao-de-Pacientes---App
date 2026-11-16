@@ -1,0 +1,4 @@
+services:
+  ocr-backend:
+    mem_limit: 512m
+    cpus: 1

@@ -14,12 +14,14 @@ from typing import Final
 import fitz  # PyMuPDF
 import httpx
 import pytesseract
-from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pdf2image import convert_from_path
 from PIL import Image
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.responses import JSONResponse
 
 # ---------------------------------------------------------------------------
 # Configuração
@@ -80,6 +82,23 @@ app = FastAPI(
     openapi_url=None if is_production else "/openapi.json",
     lifespan=lifespan,
 )
+
+# Rejeição antecipada de requisições POST /ocr sem cabeçalho Authorization
+# Impede o consumo de banda e buffering em disco/memória de arquivos multipart não autenticados
+class EarlyAuthMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        if request.url.path == "/ocr" and request.method == "POST":
+            auth = request.headers.get("Authorization")
+            if not auth or not auth.startswith("Bearer ") or not auth[7:].strip():
+                return JSONResponse(
+                    status_code=401,
+                    content={"detail": "Não autorizado. Token de autenticação ausente ou inválido."},
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
+        return await call_next(request)
+
+
+app.add_middleware(EarlyAuthMiddleware)
 
 # CORS — permitir qualquer origem durante desenvolvimento.
 # Em produção, restrinja para o domínio do app.
@@ -176,8 +195,9 @@ def _ocr_image(path: str) -> str:
 def _extract_pdf(path: str) -> str:
     """
     Tenta extrair texto nativo do PDF.
-    Se o texto for muito curto (< MIN_NATIVE_TEXT_LEN), converte cada página
-    em imagem a 300 DPI e roda OCR.
+    Se o texto for muito curto (< MIN_NATIVE_TEXT_LEN), converte página a página
+    em imagem a 300 DPI e roda OCR com Tesseract, liberando a memória de cada
+    página imediatamente antes de processar a próxima.
     """
     try:
         doc = fitz.open(path)
@@ -211,20 +231,36 @@ def _extract_pdf(path: str) -> str:
     if len(native_text.strip()) >= MIN_NATIVE_TEXT_LEN:
         return native_text.strip()
 
-    # 2. Fallback: OCR via imagens
-    try:
-        images = convert_from_path(path, dpi=300)
-    except Exception as exc:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Erro ao converter PDF em imagens para OCR: {exc}",
-        )
-
+    # 2. Fallback: OCR via imagens página a página (redução do pico de memória)
     parts: list[str] = []
-    for img in images:
-        text: str = pytesseract.image_to_string(img, lang=TESSERACT_LANG)
-        if text.strip():
-            parts.append(text.strip())
+    for page_num in range(1, page_count + 1):
+        page_images = None
+        try:
+            try:
+                page_images = convert_from_path(
+                    path,
+                    dpi=300,
+                    first_page=page_num,
+                    last_page=page_num,
+                )
+            except Exception as exc:
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Erro ao converter página {page_num} do PDF em imagem para OCR: {exc}",
+                )
+
+            if page_images:
+                img = page_images[0]
+                try:
+                    text: str = pytesseract.image_to_string(img, lang=TESSERACT_LANG)
+                    if text.strip():
+                        parts.append(text.strip())
+                finally:
+                    img.close()
+                    del img
+        finally:
+            if page_images:
+                del page_images
 
     return "\n\n".join(parts)
 
