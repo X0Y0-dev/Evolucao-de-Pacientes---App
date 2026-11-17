@@ -59,6 +59,15 @@ O arquivo `app.config.js` está configurado para permitir `usesCleartextTraffic`
 
 ---
 
+## ✉️ Compartilhamento de Relatórios por E-mail
+
+O envio de relatórios clínicos por e-mail é operado diretamente no dispositivo móvel através do `expo-mail-composer`:
+- Dispara o aplicativo de e-mail padrão configurado no celular (Gmail, Apple Mail, Outlook, etc.).
+- O e-mail é enviado da conta pessoal/profissional do próprio usuário, sem depender de provedores de terceiros ou Edge Functions.
+- O documento anexado é obtido de forma segura via URL assinada temporária do Supabase Storage.
+
+---
+
 ## 🧪 Checklist de Testes
 
 Siga estes 5 passos para validar o funcionamento ponta a ponta:

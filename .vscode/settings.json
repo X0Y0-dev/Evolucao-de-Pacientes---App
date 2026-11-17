@@ -1,6 +1,1 @@
-﻿{
-  "deno.enable": false,
-  "deno.enablePaths": [
-    "./supabase/functions"
-  ]
-}
+{}

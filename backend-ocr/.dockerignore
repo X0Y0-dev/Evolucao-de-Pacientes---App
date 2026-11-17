@@ -28,3 +28,9 @@ README.md
 Dockerfile
 docker-compose.yml
 .dockerignore
+
+# tipos de arquivo ocr
+*.json
+*.pdf
+*.png
+*.jpg

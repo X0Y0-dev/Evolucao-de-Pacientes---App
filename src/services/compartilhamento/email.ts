@@ -5,7 +5,7 @@
  *
  * Características da implementação:
  * 1. Cliente Nativo: Dispara a folha de composição de e-mail do sistema operacional
- *    sem depender de serviços de backend de terceiros (como Resend).
+ *    sem depender de serviços de backend de terceiros.
  * 2. Texto Simples (isHtml: false): Preserva formatação legível sem tags HTML.
  * 3. Gerenciamento Seguro de Anexos:
  *    - Se houver arquivo anexado, gera URL assinada temporária no Supabase Storage.
