@@ -125,7 +125,9 @@ export default function ReportForm({ route }: Props) {
         setFileSize(asset.fileSize);
       }
     } catch (err) {
-      console.log('Error picking image', err);
+      if (__DEV__) {
+        console.log('Error picking image', err);
+      }
     }
   };
 
@@ -143,7 +145,9 @@ export default function ReportForm({ route }: Props) {
         setFileSize(asset.size);
       }
     } catch (err) {
-      console.log('Error picking document', err);
+      if (__DEV__) {
+        console.log('Error picking document', err);
+      }
     }
   };
 

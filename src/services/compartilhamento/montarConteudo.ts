@@ -19,26 +19,15 @@ export const LIMITE_AVISO_TEXTO = 4000;
 
 /**
  * Formata a identificação do paciente para o compartilhamento.
- * Exibe o nome social (caso preenchido) ou o nome civil, junto ao prontuário.
+ * Exibe apenas o número de prontuário, sem nome, para preservar a privacidade do paciente.
  */
 export function formatarIdentificacaoPaciente(
   prontuario?: string,
-  nomeCivil?: string,
-  nomeSocial?: string,
 ): string {
-  const partes: string[] = [];
-
-  const nomeExibicao = (nomeSocial && nomeSocial.trim()) ? nomeSocial.trim() : nomeCivil?.trim();
-
-  if (nomeExibicao) {
-    partes.push(nomeExibicao);
-  }
-
   if (prontuario && prontuario.trim()) {
-    partes.push(`Prontuário: ${prontuario.trim()}`);
+    return `Prontuário: ${prontuario.trim()}`;
   }
-
-  return partes.length > 0 ? partes.join(' | ') : 'Paciente não identificado';
+  return 'Paciente não identificado';
 }
 
 /**
@@ -49,21 +38,18 @@ export function isTextoExtenso(texto: string, limite = LIMITE_AVISO_TEXTO): bool
 }
 
 /**
- * Monta o objeto de conteúdo formatado para compartilhamento.
+ * Monta o objeto de conteúdo formatado para compartilhamento via WhatsApp.
  *
  * Utiliza marcação simples compatível com WhatsApp (*negrito*) de forma moderada,
  * garantindo blocos legíveis e organizados com linhas em branco.
+ * A identificação do paciente usa exclusivamente o prontuário, sem nome, por privacidade.
  */
 export function montarConteudoCompartilhamento(
   caso: DadosCasoCompartilhamento,
 ): ConteudoCompartilhamento {
   const numero = caso.numeroRelatorio ? ` ${caso.numeroRelatorio}` : '';
   const titulo = `Relatório de Evolução${numero}`;
-  const identificacao = formatarIdentificacaoPaciente(
-    caso.prontuario,
-    caso.nomeCivil,
-    caso.nomeSocial,
-  );
+  const identificacao = formatarIdentificacaoPaciente(caso.prontuario);
 
   const blocos: string[] = [];
 
