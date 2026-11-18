@@ -12,7 +12,7 @@
     },
     "userInterfaceStyle": "light",
     "ios": {
-      "supportsTablet": true,
+      "supportsTablet": false,
       "bundleIdentifier": "com.x0y0dev.EvolucaodePacientesApp",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false
@@ -39,7 +39,15 @@
     "plugins": [
       "expo-status-bar",
       "expo-mail-composer",
-      "expo-updates"
+      "expo-updates",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Permite selecionar fotos de pacientes e anexar imagens aos relatórios de evolução.",
+          "cameraPermission": false,
+          "microphonePermission": false
+        }
+      ]
     ]
   }
 }
