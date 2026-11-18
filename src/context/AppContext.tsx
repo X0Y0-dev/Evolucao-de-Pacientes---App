@@ -46,6 +46,13 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
   };
 
   const fetchPatients = async () => {
+    // 1. Não busca se não houver usuário autenticado
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session?.user) {
+      setPatients([]);
+      return;
+    }
+
     setIsLoading(true);
     try {
       const { data: pacientesData, error: pacientesError } = await supabase
@@ -53,6 +60,13 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
         .select('*');
 
       if (pacientesError) {
+        // Se a sessão expirou enquanto a consulta rodava
+        const { data: { session: currentSession } } = await supabase.auth.getSession();
+        if (!currentSession?.user) {
+          setPatients([]);
+          return;
+        }
+
         const msg = buildErrorMessage(pacientesError);
         console.error('[fetchPatients] Erro ao buscar pacientes:\n', msg);
         Alert.alert('Erro ao carregar pacientes', msg);
@@ -64,6 +78,12 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
         .select('*');
 
       if (relatoriosError) {
+        const { data: { session: currentSession } } = await supabase.auth.getSession();
+        if (!currentSession?.user) {
+          setPatients([]);
+          return;
+        }
+
         const msg = buildErrorMessage(relatoriosError);
         console.error('[fetchPatients] Erro ao buscar relatórios:\n', msg);
         Alert.alert('Erro ao carregar relatórios', msg);
@@ -77,6 +97,12 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
 
       setPatients(pacientesFormatados);
     } catch (error: any) {
+      const { data: { session: currentSession } } = await supabase.auth.getSession();
+      if (!currentSession?.user) {
+        setPatients([]);
+        return;
+      }
+
       const msg = buildErrorMessage(error);
       console.error('[fetchPatients] Exceção inesperada:\n', msg);
       Alert.alert('Erro inesperado ao carregar dados', msg);
@@ -86,7 +112,27 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
   };
 
   useEffect(() => {
-    fetchPatients();
+    // 1. Carrega dados se houver sessão inicial ativa
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session?.user) {
+        fetchPatients();
+      } else {
+        setPatients([]);
+      }
+    });
+
+    // 2. Reage a login, logout e troca de conta
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (session?.user) {
+        fetchPatients();
+      } else {
+        setPatients([]);
+      }
+    });
+
+    return () => {
+      subscription.unsubscribe();
+    };
   }, []);
 
   const addPatient = async (patient: Omit<Patient, 'id' | 'reports'>): Promise<boolean> => {
@@ -96,8 +142,6 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
 
       let finalPhotoPath: string | undefined = patient.foto_perfil_path;
 
-      const { data: { session } } = await supabase.auth.getSession();
-      console.log('[DEBUG] Sessão ativa:', session ? `SIM — role: ${session.user?.role}, expira: ${session.expires_at}` : 'NENHUMA');
       // Upload da foto usando expo-file-system + base64-arraybuffer
       if (finalPhotoPath && (finalPhotoPath.startsWith('file://') || finalPhotoPath.startsWith('content://'))) {
         try {
@@ -105,16 +149,13 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
           const contentType = getContentType(finalPhotoPath);
           const fileName = `${patient.prontuario}.${extension}`;
 
-          console.log('[addPatient] Iniciando upload da foto:', fileName);
-
-          const { path: fotoPath, publicUrl } = await uploadFileToBucket(
+          const { path: fotoPath } = await uploadFileToBucket(
             finalPhotoPath,
             'pacientes_fotos',
             fileName,
             contentType
           );
 
-          console.log('[addPatient] Upload de foto bem-sucedido. Path:', fotoPath);
           finalPhotoPath = fotoPath; // salva o path do storage, não a URL pública
         } catch (uploadErr: any) {
           const msg = buildErrorMessage(uploadErr);
@@ -129,8 +170,6 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
         nascimento: formattedNascimento,
         foto_perfil_path: finalPhotoPath,
       };
-
-      console.log('[addPatient] Payload enviado ao Supabase:', JSON.stringify(payload, null, 2));
 
       const { data, error } = await supabase
         .from('pacientes')
@@ -239,8 +278,6 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
           const contentType = getContentType(finalFilePath);
           const fileName = `${Date.now()}-${report.arquivo_nome ?? `arquivo.${extension}`}`;
 
-          console.log('[addReport] Iniciando upload do arquivo:', fileName);
-
           const { path: arquivoPath } = await uploadFileToBucket(
             finalFilePath,
             'relatorios_arquivos',
@@ -248,7 +285,6 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
             contentType
           );
 
-          console.log('[addReport] Upload de arquivo bem-sucedido. Path:', arquivoPath);
           finalFilePath = arquivoPath;
         } catch (uploadErr: any) {
           const msg = buildErrorMessage(uploadErr);
@@ -262,8 +298,6 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
         ...report,
         arquivo_path: finalFilePath,
       };
-
-      console.log('[addReport] Payload enviado ao Supabase:', JSON.stringify(payload, null, 2));
 
       const { data, error } = await supabase
         .from('relatorios')
@@ -308,8 +342,6 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
           const contentType = getContentType(finalFilePath);
           const fileName = `${Date.now()}-${updates.arquivo_nome ?? `arquivo.${extension}`}`;
 
-          console.log('[updateReport] Iniciando upload do novo arquivo:', fileName);
-
           const { path: arquivoPath } = await uploadFileToBucket(
             finalFilePath,
             'relatorios_arquivos',
@@ -317,7 +349,6 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
             contentType
           );
 
-          console.log('[updateReport] Upload de arquivo bem-sucedido. Path:', arquivoPath);
           finalFilePath = arquivoPath;
         } catch (uploadErr: any) {
           const msg = buildErrorMessage(uploadErr);
@@ -332,8 +363,6 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
         ...(finalFilePath !== undefined ? { arquivo_path: finalFilePath } : {}),
         atualizado_em: new Date().toISOString(),
       };
-
-      console.log('[updateReport] Payload enviado ao Supabase:', JSON.stringify(payload, null, 2));
 
       const { data, error } = await supabase
         .from('relatorios')
@@ -437,12 +466,9 @@ export const AppProvider = ({ children }: { children: ReactNode }) => {
 
       // 2. Apaga a foto de perfil
       if (patient.foto_perfil_path) {
-        const { data: removedData, error: photoStorageError } = await supabase.storage
+        const { error: photoStorageError } = await supabase.storage
           .from('pacientes_fotos')
           .remove([patient.foto_perfil_path]);
-
-        console.log('[deletePatient] Path que tentei apagar:', patient.foto_perfil_path);
-        console.log('[deletePatient] Resultado do remove:', JSON.stringify(removedData));
 
         if (photoStorageError) {
           console.error('[deletePatient] Erro ao apagar foto:\n', buildErrorMessage(photoStorageError));
