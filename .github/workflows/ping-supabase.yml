@@ -13,12 +13,12 @@ jobs:
     steps:
       - name: Send Request to Supabase API
         env:
-          API_URL: ${{ secrets.API_URL }}
-          API_KEY: ${{ secrets.API_KEY }}
+          API_URL: ${{ secrets.EXPO_PUBLIC_SUPABASE_URL }}
+          API_KEY: ${{ secrets.EXPO_PUBLIC_SUPABASE_KEY }}
         run: |
           set -e
 
-          BASE_URL="${API_URL%/}"
+          BASE_URL="${EXPO_PUBLIC_SUPABASE_URL%/}"
           BASE_URL="${BASE_URL%/rest/v1}"
 
           STATUS=$(curl --silent --show-error \
@@ -26,7 +26,7 @@ jobs:
             --retry 2 --retry-delay 5 \
             --output /tmp/resp.txt --write-out "%{http_code}" \
             -X POST "${BASE_URL}/rest/v1/rpc/ping" \
-            -H "apikey: ${API_KEY}" \
+            -H "apikey: ${EXPO_PUBLIC_SUPABASE_KEY}" \
             -H "Content-Type: application/json" \
             -d '{}')
 

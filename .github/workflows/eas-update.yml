@@ -1,0 +1,93 @@
+name: Atualização OTA (EAS Update)
+
+# Push na main que mexa no código do app -> publica no canal "preview".
+# Para publicar em produção (ou em preview manualmente): aba Actions >
+# "Atualização OTA (EAS Update)" > Run workflow > escolher o canal.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "src/**"
+      - "assets/**"
+      - "App.tsx"
+      - "index.ts"
+      - "app.json"
+      - "app.config.js"
+      - "package.json"
+      - "package-lock.json"
+      - "tsconfig.json"
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: "Canal de destino da atualização"
+        type: choice
+        options:
+          - preview
+          - production
+        default: preview
+
+# Evita duas publicações ao mesmo tempo
+concurrency:
+  group: eas-update
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    env:
+      CHANNEL: ${{ github.event.inputs.channel || 'preview' }}
+      # Mesmos valores de produção do build. Cadastre em:
+      # GitHub > Settings > Secrets and variables > Actions > Variables.
+      # (são valores públicos; NÃO coloque chaves secretas aqui)
+      APP_ENV: production
+      EXPO_PUBLIC_OCR_URL: ${{ vars.EXPO_PUBLIC_OCR_URL }}
+      EXPO_PUBLIC_SUPABASE_URL: ${{ vars.EXPO_PUBLIC_SUPABASE_URL }}
+      EXPO_PUBLIC_SUPABASE_ANON_KEY: ${{ vars.EXPO_PUBLIC_SUPABASE_ANON_KEY }}
+    steps:
+      - name: Baixar o código
+        uses: actions/checkout@v4
+
+      - name: Configurar o Node
+        uses: actions/setup-node@v4
+        with:
+          # Use a mesma versão major do Node que você usa localmente
+          # (confira com `node --version` e com a exigência do SDK 58).
+          node-version: lts/*
+          cache: npm
+
+      - name: Configurar o EAS CLI
+        uses: expo/expo-github-action@v8
+        with:
+          eas-version: latest
+          # Secret criado em: GitHub > Settings > Secrets and variables > Actions > Secrets
+          token: ${{ secrets.EXPO_TOKEN }}
+
+      - name: Instalar dependências
+        run: npm ci
+
+      - name: Conferir tipos (TypeScript)
+        run: npx tsc --noEmit
+
+      - name: Conferir variáveis públicas
+        run: |
+          for v in EXPO_PUBLIC_OCR_URL EXPO_PUBLIC_SUPABASE_URL EXPO_PUBLIC_SUPABASE_ANON_KEY; do
+            if [ -z "${!v}" ]; then
+              echo "A variável $v não está configurada no GitHub."
+              exit 1
+            fi
+          done
+          case "$EXPO_PUBLIC_OCR_URL" in
+            https://*) ;;
+            *) echo "A URL do OCR precisa começar com https://"; exit 1 ;;
+          esac
+
+      - name: Publicar a atualização
+        run: >
+          eas update
+          --channel "$CHANNEL"
+          --platform android
+          --message "auto ${GITHUB_SHA::7}"
+          --non-interactive
