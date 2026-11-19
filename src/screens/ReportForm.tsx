@@ -317,29 +317,18 @@ export default function ReportForm({ route }: Props) {
       }
     };
 
-    const confirmarEnvio = () => {
-      if (isTextoExtenso(conteudo.texto, LIMITE_AVISO_TEXTO)) {
-        Alert.alert(
-          'Texto extenso',
-          `O relatório possui mais de ${LIMITE_AVISO_TEXTO} caracteres. Por questões de legibilidade no WhatsApp, a mensagem pode ficar bastante longa.\n\nDeseja continuar mesmo assim?`,
-          [
-            { text: 'Cancelar', style: 'cancel' },
-            { text: 'Continuar', onPress: executarEnvio },
-          ]
-        );
-      } else {
-        executarEnvio();
-      }
-    };
-
-    Alert.alert(
-      'Compartilhar via WhatsApp',
-      'O conteúdo será compartilhado pelo WhatsApp. Confirme que não há dados que identifiquem o paciente.',
-      [
-        { text: 'Cancelar', style: 'cancel' },
-        { text: 'Continuar', onPress: confirmarEnvio },
-      ]
-    );
+    if (isTextoExtenso(conteudo.texto, LIMITE_AVISO_TEXTO)) {
+      Alert.alert(
+        'Texto extenso',
+        `O relatório possui mais de ${LIMITE_AVISO_TEXTO} caracteres. Por questões de legibilidade no WhatsApp, a mensagem pode ficar bastante longa.\n\nDeseja continuar mesmo assim?`,
+        [
+          { text: 'Cancelar', style: 'cancel' },
+          { text: 'Continuar', onPress: executarEnvio },
+        ]
+      );
+    } else {
+      executarEnvio();
+    }
   };
 
   const handleAddRecipient = (section: RecipientSection) => {

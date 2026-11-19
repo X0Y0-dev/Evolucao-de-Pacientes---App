@@ -19,15 +19,14 @@ export const LIMITE_AVISO_TEXTO = 4000;
 
 /**
  * Formata a identificação do paciente para o compartilhamento.
- * Exibe apenas o número de prontuário, sem nome, para preservar a privacidade do paciente.
+ * Exibe o nome social (caso preenchido) ou o nome civil do paciente.
  */
 export function formatarIdentificacaoPaciente(
-  prontuario?: string,
+  nomeCivil?: string,
+  nomeSocial?: string,
 ): string {
-  if (prontuario && prontuario.trim()) {
-    return `Prontuário: ${prontuario.trim()}`;
-  }
-  return 'Paciente não identificado';
+  const nomeExibicao = (nomeSocial && nomeSocial.trim()) ? nomeSocial.trim() : nomeCivil?.trim();
+  return nomeExibicao || 'Paciente não identificado';
 }
 
 /**
@@ -42,14 +41,14 @@ export function isTextoExtenso(texto: string, limite = LIMITE_AVISO_TEXTO): bool
  *
  * Utiliza marcação simples compatível com WhatsApp (*negrito*) de forma moderada,
  * garantindo blocos legíveis e organizados com linhas em branco.
- * A identificação do paciente usa exclusivamente o prontuário, sem nome, por privacidade.
+ * A identificação do paciente utiliza o nome do paciente (social ou civil).
  */
 export function montarConteudoCompartilhamento(
   caso: DadosCasoCompartilhamento,
 ): ConteudoCompartilhamento {
   const numero = caso.numeroRelatorio ? ` ${caso.numeroRelatorio}` : '';
   const titulo = `Relatório de Evolução${numero}`;
-  const identificacao = formatarIdentificacaoPaciente(caso.prontuario);
+  const identificacao = formatarIdentificacaoPaciente(caso.nomeCivil, caso.nomeSocial);
 
   const blocos: string[] = [];
 
@@ -80,29 +79,27 @@ export function montarConteudoCompartilhamento(
  * Monta o objeto de conteúdo formatado para compartilhamento por e-mail.
  *
  * Características específicas do canal de e-mail:
- * - Corpo em texto simples (isHtml: false), sem formatação de asteriscos.
- * - Assunto: `Relatório de Evolução {n} - {identificação}`.
- * - Identificação: utiliza exclusivamente `formatarIdentificacaoPaciente(caso.prontuario)`
- *   (apenas número do caso/prontuário, sem nome do paciente).
- * - Corpo: relatório (transcrição) e comentário (omitido se vazio).
+ * - Assunto: `Relatório de Evolução {n} - {nome do paciente}`.
+ * - Identificação: utiliza o nome do paciente (social ou civil).
+ * - Corpo: seções em negrito (*Relatório:* e *Comentários:*) com um '\n' de distância do texto.
  */
 export function montarConteudoEmail(
   caso: DadosCasoCompartilhamento,
 ): ConteudoCompartilhamento {
   const numero = caso.numeroRelatorio ? ` ${caso.numeroRelatorio}` : '';
-  const identificacao = formatarIdentificacaoPaciente(caso.prontuario);
+  const identificacao = formatarIdentificacaoPaciente(caso.nomeCivil, caso.nomeSocial);
   const titulo = `Relatório de Evolução${numero} - ${identificacao}`;
 
   const blocos: string[] = [];
 
   // Seção de Relatório (transcrição)
   const relatorioTexto = caso.transcricao?.trim() || 'Sem conteúdo de relatório.';
-  blocos.push(`Relatório:\n${relatorioTexto}`);
+  blocos.push(`*Relatório:*\n${relatorioTexto}`);
 
   // Seção de Comentários (omitida se vazia)
   const comentarioTexto = caso.comentario?.trim();
   if (comentarioTexto) {
-    blocos.push(`Comentários:\n${comentarioTexto}`);
+    blocos.push(`*Comentários:*\n${comentarioTexto}`);
   }
 
   const textoFinal = blocos.join('\n\n');
