@@ -18,6 +18,11 @@ jobs:
         run: |
           set -e
 
+          if [ -z "${API_URL}" ] || [ -z "${API_KEY}" ]; then
+              echo "Secrets ausentes: confira os nomes em Settings > Secrets and variables > Actions"
+              exit 1
+          fi
+
           BASE_URL="${API_URL%/}"
           BASE_URL="${BASE_URL%/rest/v1}"
 

@@ -43,9 +43,9 @@ jobs:
       # GitHub > Settings > Secrets and variables > Actions > Variables.
       # (são valores públicos; NÃO coloque chaves secretas aqui)
       APP_ENV: production
-      EXPO_PUBLIC_OCR_URL: ${{ vars.EXPO_PUBLIC_OCR_URL }}
-      EXPO_PUBLIC_SUPABASE_URL: ${{ vars.EXPO_PUBLIC_SUPABASE_URL }}
-      EXPO_PUBLIC_SUPABASE_ANON_KEY: ${{ vars.EXPO_PUBLIC_SUPABASE_ANON_KEY }}
+      EXPO_PUBLIC_OCR_URL: ${{ secrets.EXPO_PUBLIC_OCR_URL }}
+      EXPO_PUBLIC_SUPABASE_URL: ${{ secrets.EXPO_PUBLIC_SUPABASE_URL }}
+      EXPO_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.EXPO_PUBLIC_SUPABASE_KEY }}
     steps:
       - name: Baixar o código
         uses: actions/checkout@v4
